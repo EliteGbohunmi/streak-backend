@@ -40,7 +40,7 @@ async function sendPush(userId, title, body, data = {}) {
 async function sendEmail(to, subject, html) {
   try {
     await resend.emails.send({
-      from: 'Streak <notifications@streak.app>',
+      from: 'onboarding@resend.dev',
       to,
       subject,
       html
