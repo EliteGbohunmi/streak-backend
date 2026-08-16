@@ -2,6 +2,7 @@ const router = require('express').Router()
 const supabase = require('../supabase')
 const { notifyUser } = require('../services/notificationService')
 const webpush = require('web-push')
+const { sendEmail } = require('../services/notificationService');
 
 // Save push subscription
 router.post('/subscribe', async (req, res) => {
