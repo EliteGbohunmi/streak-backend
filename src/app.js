@@ -1,3 +1,14 @@
+console.log('🚀 App starting...');
+
+process.on('uncaughtException', (err) => {
+  console.error('💥 UNCAUGHT EXCEPTION:', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 UNHANDLED REJECTION:', reason);
+  process.exit(1);
+});
+
 const express = require('express')
 const cors = require('cors')
 require('dotenv').config()
@@ -27,5 +38,15 @@ app.listen(PORT, () => {
   console.log(`Streak backend running on port ${PORT}`)
   startScheduler()
 })
+
+// Keep the process alive (Railway sometimes kills idle containers)
+setInterval(() => {
+  // no-op, just to keep the event loop busy
+}, 60000);
+
+process.on('SIGTERM', () => {
+  console.log('⚠️ Received SIGTERM, but we are ignoring it');
+  // Don't exit – keep running
+});
 
 module.exports = app
