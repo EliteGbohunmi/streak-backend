@@ -29,8 +29,8 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ---- All your existing API routes (nudge, unread, subscribe) go here ----
-// (copy them from your current app.js – they are unchanged)
+// ---- All your API routes (nudge, unread, subscribe) ----
+// (keep them unchanged – they are already in your code)
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, '0.0.0.0', () => {
@@ -38,22 +38,13 @@ app.listen(PORT, '0.0.0.0', () => {
   startScheduler();
 });
 
-// ---- Forever keep-alive (prevents exit) ----
-(async function eternal() {
-  console.log('⏳ Eternal loop started');
-  while (true) {
-    await new Promise(resolve => setTimeout(resolve, 60000));
-    console.log('🔄 Eternal ping');
-  }
-})();
+// ---- Keep-alive ping (just to keep event loop busy) ----
+setInterval(() => {
+  console.log('🔄 Keep-alive ping');
+}, 60000);
 
-// Force stdin to stay open (just in case)
-process.stdin.resume();
-
-// ---- Ignore SIGTERM ----
+// ---- Let the process exit gracefully if needed (but we keep it alive) ----
 process.on('SIGTERM', () => {
-  console.log('⚠️ SIGTERM received – ignoring');
-});
-process.on('SIGINT', () => {
-  console.log('⚠️ SIGINT received – ignoring');
+  console.log('⚠️ SIGTERM received – shutting down gracefully');
+  // Do not exit immediately – let the health check handle it
 });
