@@ -3,6 +3,7 @@ const cors = require('cors');
 require('dotenv').config();
 const supabase = require('./supabase');
 const { notifyUser, sendEmail, getRandomNudgeMessage } = require('./notificationService');
+const { startScheduler } = require('./scheduler');
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Nudge endpoint
 app.post('/api/notifications/nudge', async (req, res) => {
   const { from_user_id, to_user_id } = req.body;
   console.log('📨 Nudge from', from_user_id, 'to', to_user_id);
@@ -41,21 +43,20 @@ app.post('/api/notifications/nudge', async (req, res) => {
       .single();
     const streakCount = streak?.current_streak || 0;
 
-    // Generate random message
     const nudgeMessage = getRandomNudgeMessage(fromProfile.name, toProfile.name);
     const pushTitle = '👋 You got nudged!';
 
     // 1. Push + email fallback to partner
     await notifyUser(to_user_id, pushTitle, nudgeMessage, { action: 'checkin' });
 
-    // 2. Save in‑app notification for partner
+    // 2. In‑app notification
     await supabase.from('user_notifications').insert({
       user_id: to_user_id,
       message: nudgeMessage,
       from_user_id: from_user_id
     });
 
-    // 3. Send confirmation email to nudger
+    // 3. Confirmation email to nudger
     if (fromProfile.email) {
       const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
@@ -130,4 +131,5 @@ app.delete('/api/notifications/subscribe', async (req, res) => {
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
+  startScheduler();
 });
