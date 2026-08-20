@@ -31,11 +31,8 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ---- API Routes ----
-app.use('/api/notifications', require('./routes/notifications'));   // if you have this file
-app.use('/api/streaks', require('./routes/streaks'));               // if you have this file
-app.use('/api/ai', require('./routes/ai'));                         // if you have this file
-app.use('/api/community', require('./routes/community'));           // <-- NEW
+// ---- Community Board routes ----
+app.use('/api/community', require('./routes/community'));  // this file exists
 
 // ---- Nudge endpoint (direct) ----
 app.post('/api/notifications/nudge', async (req, res) => {
