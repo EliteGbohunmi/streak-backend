@@ -14,6 +14,37 @@ try {
   console.warn('⚠️ VAPID setup failed (push disabled):', err.message);
 }
 
+// ----- Nudge messages (20 variations) -----
+const NUDGE_MESSAGES = [
+  "Hey {to}, {from} is checking on you. Have you posted today? Don't break your streak!",
+  "Your partner {from} nudged you, {to}. Time to post and keep that streak alive!",
+  "{to}, {from} just sent a nudge – you're falling behind! Post something now.",
+  "Accountability check! {from} reminded you to post, {to}. Don't let them down.",
+  "{to}, your streak is at risk! {from} is counting on you to post today.",
+  "Hey {to}, {from} noticed you haven't posted yet. Let's go!",
+  "{from} says: '{to}, get that post up! Your streak depends on it.'",
+  "{to}, this is your nudge from {from}. One post today keeps the flame alive.",
+  "Don't break the chain, {to}. {from} believes in you – post now!",
+  "{to}, {from} is waiting for your post. You've got this!",
+  "Time to create, {to}. {from} just nudged you to share your work.",
+  "{to}, your partner {from} is holding you accountable. Post something!",
+  "Nudge from {from}: '{to}, what are you waiting for? Post today!'",
+  "{to}, {from} checked in and saw you missed today. Let's fix that!",
+  "Hey {to}, {from} is on fire – don't let the streak die. Post now!",
+  "{to}, this is your reminder from {from} to post. You'll thank yourself later.",
+  "Accountability partner {from} says: '{to}, don't procrastinate – post today!'",
+  "{to}, {from} is watching your streak. Keep it going with one post!",
+  "Nudge! {from} wants to see your post, {to}. The community is waiting.",
+  "{to}, {from} just sent a nudge – it's your turn to create something amazing!"
+];
+
+function getRandomNudgeMessage(fromName, toName) {
+  const raw = NUDGE_MESSAGES[Math.floor(Math.random() * NUDGE_MESSAGES.length)];
+  return raw.replace(/{from}/g, fromName).replace(/{to}/g, toName);
+}
+
+// ----- Push / Email / Notification functions -----
+
 async function sendPush(userId, title, body, data = {}) {
   const { data: subs } = await supabase
     .from('push_subscriptions')
@@ -78,76 +109,14 @@ async function notifyUser(userId, title, body, data = {}) {
 
   if (!pushed && profile.email) {
     const fallbackHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Nudge from your partner</title>
-      </head>
-      <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 0;">
-        <div style="max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-          <!-- Header -->
-          <div style="background: #F5A623; padding: 24px; text-align: center;">
-            <h1 style="color: #fff; margin: 0; font-size: 28px;">🔥 Streak</h1>
-            <p style="color: #fff; margin: 4px 0 0; font-size: 14px;">Stay on track</p>
-          </div>
-
-          <!-- Body -->
-          <div style="padding: 28px 24px;">
-            <h2 style="color: #333; font-size: 22px; margin-top: 0;">${title}</h2>
-            <p style="font-size: 16px; line-height: 1.6; color: #444;">
-              ${body}
-            </p>
-            <p style="font-size: 16px; line-height: 1.6; color: #444;">
-              A quick post now keeps your streak alive. You've got this!
-            </p>
-
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="https://creator-accountability.netlify.app/dashboard"
-                 style="background: #F5A623; color: #000; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">
-                Post Now
-              </a>
-            </div>
-
-            <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 24px 0;">
-
-            <!-- Contact / Support -->
-            <div style="background: #f9f9f9; padding: 16px; border-radius: 6px;">
-              <p style="font-size: 14px; color: #555; margin: 0;">
-                <strong>💬 Need help or have feedback?</strong><br>
-                We're here for you. Reply to this email or contact us at:
-              </p>
-              <p style="font-size: 14px; color: #333; margin: 8px 0 0;">
-                <a href="mailto:${process.env.SENDER_EMAIL}" style="color: #F5A623; text-decoration: none;">
-                  ${process.env.SENDER_EMAIL}
-                </a>
-              </p>
-              <p style="font-size: 13px; color: #777; margin: 6px 0 0;">
-                (Developer contact for support and suggestions)
-              </p>
-            </div>
-
-            <!-- Footer -->
-            <div style="margin-top: 24px; text-align: center; font-size: 12px; color: #999;">
-              <p style="margin: 4px 0;">
-                You're receiving this because you're part of <strong>Creator Accountability</strong>.
-              </p>
-              <p style="margin: 4px 0;">
-                <a href="https://creator-accountability.netlify.app/unsubscribe?email=${profile.email}" style="color: #999; text-decoration: underline;">
-                  Unsubscribe
-                </a>
-                &nbsp;·&nbsp; 
-                <a href="https://creator-accountability.netlify.app" style="color: #999; text-decoration: underline;">
-                  Visit our site
-                </a>
-              </p>
-              <p style="margin: 8px 0 0; color: #bbb;">© ${new Date().getFullYear()} Streak</p>
-            </div>
-          </div>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        <h2 style="color: #F5A623;">🔥 Streak</h2>
+        <p style="font-size: 16px;">${body}</p>
+        <div style="text-align: center; margin: 20px 0;">
+          <a href="https://creator-accountability.netlify.app/dashboard" style="background: #F5A623; color: #000; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open Dashboard</a>
         </div>
-      </body>
-      </html>
+        <p style="font-size: 12px; color: #999; text-align: center;">You're receiving this because you're part of Creator Accountability.</p>
+      </div>
     `;
     await sendEmail(profile.email, title, fallbackHtml);
   }
@@ -163,4 +132,4 @@ async function logNotification(userId, type, delivered, title, error = null) {
   });
 }
 
-module.exports = { sendPush, sendEmail, notifyUser };
+module.exports = { sendPush, sendEmail, notifyUser, getRandomNudgeMessage };

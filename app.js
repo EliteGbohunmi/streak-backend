@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const supabase = require('./supabase');
-const { notifyUser, sendEmail } = require('./notificationService');
+const { notifyUser, sendEmail, getRandomNudgeMessage } = require('./notificationService');
 
 const app = express();
 
@@ -20,7 +20,6 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Nudge endpoint
 app.post('/api/notifications/nudge', async (req, res) => {
   const { from_user_id, to_user_id } = req.body;
   console.log('📨 Nudge from', from_user_id, 'to', to_user_id);
@@ -42,28 +41,28 @@ app.post('/api/notifications/nudge', async (req, res) => {
       .single();
     const streakCount = streak?.current_streak || 0;
 
-    // 1. Push (and email fallback) to partner
-    await notifyUser(
-      to_user_id,
-      '👋 You got nudged!',
-      `${fromProfile.name} is checking on you. Have you posted today?`,
-      { action: 'checkin' }
-    );
+    // Generate random message
+    const nudgeMessage = getRandomNudgeMessage(fromProfile.name, toProfile.name);
+    const pushTitle = '👋 You got nudged!';
 
-    // 2. Save a notification for the partner (visible on login)
+    // 1. Push + email fallback to partner
+    await notifyUser(to_user_id, pushTitle, nudgeMessage, { action: 'checkin' });
+
+    // 2. Save in‑app notification for partner
     await supabase.from('user_notifications').insert({
       user_id: to_user_id,
-      message: `${fromProfile.name} nudged you to post today. They're counting on you!`,
+      message: nudgeMessage,
       from_user_id: from_user_id
     });
 
-    // 3. Send confirmation email to the nudger
+    // 3. Send confirmation email to nudger
     if (fromProfile.email) {
       const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
           <h2 style="color: #F5A623;">🔥 Streak</h2>
-          <p>You just nudged <strong>${toProfile.name}</strong>.</p>
-          <p>Their current streak is <strong>${streakCount} days</strong>.</p>
+          <p>You nudged <strong>${toProfile.name}</strong>.</p>
+          <p><em>${nudgeMessage}</em></p>
+          <p>Their current streak: <strong>${streakCount} days</strong>.</p>
           <p>Keep up the accountability!</p>
           <a href="https://creator-accountability.netlify.app/dashboard" style="background: #F5A623; color: #000; padding: 12px 24px; border-radius: 8px; text-decoration: none; display: inline-block;">Go to Dashboard</a>
         </div>
