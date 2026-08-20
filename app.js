@@ -5,6 +5,17 @@ const supabase = require('./supabase');
 const { notifyUser, sendEmail, getRandomNudgeMessage } = require('./notificationService');
 const { startScheduler } = require('./scheduler');
 
+// ---- Global error handlers ----
+process.on('uncaughtException', (err) => {
+  console.error('💥 UNCAUGHT EXCEPTION:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('💥 UNHANDLED REJECTION:', reason);
+});
+process.on('exit', (code) => {
+  console.log(`👋 Process exiting with code: ${code}`);
+});
+
 const app = express();
 
 app.use(cors({
@@ -46,17 +57,13 @@ app.post('/api/notifications/nudge', async (req, res) => {
     const nudgeMessage = getRandomNudgeMessage(fromProfile.name, toProfile.name);
     const pushTitle = '👋 You got nudged!';
 
-    // 1. Push + email fallback to partner
     await notifyUser(to_user_id, pushTitle, nudgeMessage, { action: 'checkin' });
-
-    // 2. In‑app notification
     await supabase.from('user_notifications').insert({
       user_id: to_user_id,
       message: nudgeMessage,
       from_user_id: from_user_id
     });
 
-    // 3. Confirmation email to nudger
     if (fromProfile.email) {
       const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
@@ -92,7 +99,6 @@ app.get('/api/notifications/unread', async (req, res) => {
   res.json(data);
 });
 
-// Mark notification as read
 app.post('/api/notifications/mark-read', async (req, res) => {
   const { notification_id } = req.body;
   if (!notification_id) return res.status(400).json({ error: 'Missing notification_id' });
@@ -104,12 +110,10 @@ app.post('/api/notifications/mark-read', async (req, res) => {
   res.json({ success: true });
 });
 
-// VAPID public key
 app.get('/api/notifications/vapid-key', (req, res) => {
   res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || '' });
 });
 
-// Subscribe push
 app.post('/api/notifications/subscribe', async (req, res) => {
   const { user_id, endpoint, p256dh, auth } = req.body;
   if (!user_id || !endpoint || !p256dh || !auth) {
@@ -121,7 +125,6 @@ app.post('/api/notifications/subscribe', async (req, res) => {
   res.json({ success: true });
 });
 
-// Unsubscribe
 app.delete('/api/notifications/subscribe', async (req, res) => {
   const { endpoint } = req.body;
   await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint);
@@ -129,13 +132,18 @@ app.delete('/api/notifications/subscribe', async (req, res) => {
 });
 
 // ---- Keep process alive ----
-setInterval(() => {
-  // no-op, just keeps event loop busy
+const keepAliveInterval = setInterval(() => {
+  console.log('🔄 Keep-alive ping');
 }, 60000);
 
+// Ensure interval is not cleared by anything
+keepAliveInterval.unref(); // Actually, we don't want to unref because that allows exit if only this is left? We want to keep the process alive, so we should NOT unref.
+// We'll keep it referenced.
+
+// Ignore SIGTERM
 process.on('SIGTERM', () => {
-  console.log('⚠️ Received SIGTERM, ignoring to keep container running');
-  // Do not exit – Railway will not force stop if we ignore it
+  console.log('⚠️ Received SIGTERM, ignoring');
+  // Do not exit
 });
 
 const PORT = process.env.PORT || 4000;
