@@ -128,6 +128,16 @@ app.delete('/api/notifications/subscribe', async (req, res) => {
   res.json({ success: true });
 });
 
+// ---- Keep process alive ----
+setInterval(() => {
+  // no-op, just keeps event loop busy
+}, 60000);
+
+process.on('SIGTERM', () => {
+  console.log('⚠️ Received SIGTERM, ignoring to keep container running');
+  // Do not exit – Railway will not force stop if we ignore it
+});
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
