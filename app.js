@@ -12,9 +12,6 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   console.error('💥 UNHANDLED REJECTION:', reason);
 });
-process.on('exit', (code) => {
-  console.log(`👋 Process exiting with code: ${code}`);
-});
 
 const app = express();
 
@@ -28,11 +25,13 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// ---- Health checks ----
+app.get('/', (req, res) => res.send('OK'));               // for default health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Nudge endpoint
+// ---- Nudge endpoint ----
 app.post('/api/notifications/nudge', async (req, res) => {
   const { from_user_id, to_user_id } = req.body;
   console.log('📨 Nudge from', from_user_id, 'to', to_user_id);
@@ -57,13 +56,17 @@ app.post('/api/notifications/nudge', async (req, res) => {
     const nudgeMessage = getRandomNudgeMessage(fromProfile.name, toProfile.name);
     const pushTitle = '👋 You got nudged!';
 
+    // 1. Push + email fallback to partner
     await notifyUser(to_user_id, pushTitle, nudgeMessage, { action: 'checkin' });
+
+    // 2. In‑app notification
     await supabase.from('user_notifications').insert({
       user_id: to_user_id,
       message: nudgeMessage,
       from_user_id: from_user_id
     });
 
+    // 3. Confirmation email to nudger
     if (fromProfile.email) {
       const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
@@ -85,7 +88,7 @@ app.post('/api/notifications/nudge', async (req, res) => {
   }
 });
 
-// Get unread notifications
+// ---- Unread notifications ----
 app.get('/api/notifications/unread', async (req, res) => {
   const { user_id } = req.query;
   if (!user_id) return res.status(400).json({ error: 'Missing user_id' });
@@ -110,6 +113,7 @@ app.post('/api/notifications/mark-read', async (req, res) => {
   res.json({ success: true });
 });
 
+// ---- VAPID & Push subscriptions ----
 app.get('/api/notifications/vapid-key', (req, res) => {
   res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || '' });
 });
@@ -131,21 +135,17 @@ app.delete('/api/notifications/subscribe', async (req, res) => {
   res.json({ success: true });
 });
 
-// ---- Keep process alive ----
-const keepAliveInterval = setInterval(() => {
+// ---- Keep‑alive interval ----
+setInterval(() => {
   console.log('🔄 Keep-alive ping');
 }, 60000);
 
-// Ensure interval is not cleared by anything
-keepAliveInterval.unref(); // Actually, we don't want to unref because that allows exit if only this is left? We want to keep the process alive, so we should NOT unref.
-// We'll keep it referenced.
-
-// Ignore SIGTERM
+// ---- Ignore SIGTERM ----
 process.on('SIGTERM', () => {
-  console.log('⚠️ Received SIGTERM, ignoring');
-  // Do not exit
+  console.log('⚠️ Received SIGTERM, ignoring to keep container running');
 });
 
+// ---- Start server ----
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
