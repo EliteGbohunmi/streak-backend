@@ -14,11 +14,10 @@ process.on('unhandledRejection', (reason) => {
 
 const app = express();
 
-// --- CORS with YOUR Vercel URL ---
 app.use(cors({
   origin: [
     'https://creator-accountability.netlify.app',
-    'https://creator-accountability-obv8-eight.vercel.app',   // YOUR URL
+    'https://creator-accountability-obv8-eight.vercel.app',
     'http://localhost:5173',
     'http://localhost:3000'
   ],
@@ -32,7 +31,13 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ---- Nudge endpoint ----
+// ---- API Routes ----
+app.use('/api/notifications', require('./routes/notifications'));   // if you have this file
+app.use('/api/streaks', require('./routes/streaks'));               // if you have this file
+app.use('/api/ai', require('./routes/ai'));                         // if you have this file
+app.use('/api/community', require('./routes/community'));           // <-- NEW
+
+// ---- Nudge endpoint (direct) ----
 app.post('/api/notifications/nudge', async (req, res) => {
   const { from_user_id, to_user_id } = req.body;
   console.log('📨 Nudge from', from_user_id, 'to', to_user_id);
@@ -110,6 +115,7 @@ app.post('/api/notifications/mark-read', async (req, res) => {
   res.json({ success: true });
 });
 
+// ---- VAPID & Push Subscription ----
 app.get('/api/notifications/vapid-key', (req, res) => {
   res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || '' });
 });
@@ -131,16 +137,19 @@ app.delete('/api/notifications/subscribe', async (req, res) => {
   res.json({ success: true });
 });
 
+// ---- Start server ----
 const PORT = process.env.PORT || 4000;
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend running on port ${PORT} (0.0.0.0)`);
   startScheduler();
 });
 
+// ---- Keep-alive ----
 setInterval(() => {
   console.log('🔄 Keep-alive ping');
 }, 60000);
 
+// ---- Graceful shutdown ----
 process.on('SIGTERM', () => {
   console.log('⚠️ SIGTERM received – shutting down gracefully');
   server.close(() => {
