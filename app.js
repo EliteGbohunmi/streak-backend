@@ -5,7 +5,6 @@ const supabase = require('./supabase');
 const { notifyUser, sendEmail, getRandomNudgeMessage } = require('./notificationService');
 const { startScheduler } = require('./scheduler');
 
-// ---- Global error handlers ----
 process.on('uncaughtException', (err) => {
   console.error('💥 UNCAUGHT EXCEPTION:', err);
 });
@@ -25,14 +24,13 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// ---- Health endpoints ----
 app.get('/', (req, res) => res.send('OK'));
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // ---- All API routes (nudge, unread, subscribe, etc.) ----
-// ... (keep all your existing routes – they are unchanged)
+// (keep your existing routes – unchanged)
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, '0.0.0.0', () => {
@@ -40,18 +38,16 @@ app.listen(PORT, '0.0.0.0', () => {
   startScheduler();
 });
 
-// ---- Eternal keep-alive (prevents exit) ----
+// ---- Keep-alive interval ----
 setInterval(() => {
-  console.log('🔄 Keep-alive ping (interval)');
+  console.log('🔄 Keep-alive ping');
 }, 60000);
 
-// Force stdin to stay open (prevents Node from exiting)
+// ---- Prevent Node from exiting ----
 process.stdin.resume();
 
-// ---- Ignore SIGTERM ----
 process.on('SIGTERM', () => {
   console.log('⚠️ SIGTERM received – ignoring');
-  // Keep running; do not call process.exit()
 });
 process.on('SIGINT', () => {
   console.log('⚠️ SIGINT received – ignoring');
