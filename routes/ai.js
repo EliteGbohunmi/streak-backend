@@ -1,32 +1,30 @@
 const express = require('express');
 const router = express.Router();
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 router.post('/generate', async (req, res) => {
   const { prompt } = req.body;
-
-  if (!prompt) {
-    return res.status(400).json({ error: 'Prompt is required' });
-  }
+  if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
   try {
-    // Use the updated model name
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
+    const systemPrompt = 'You are a creative content assistant for a creator accountability app. Write in a natural, authentic, and engaging voice. Avoid generic phrases and clichés. Be concise but insightful.';
 
-    const fullPrompt = `You are a creative content assistant for a creator accountability app. Write in a natural, authentic, and engaging voice. Avoid generic phrases and clichés. Be concise but insightful.
+    const response = await groq.chat.completions.create({
+      model: 'openai/gpt-oss-120b',   // active model — replaces decommissioned mixtral-8x7b-32768
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.8,
+      max_tokens: 500,
+    });
 
-User request: ${prompt}`;
-
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    const text = response.text();
-
-    res.json({ result: text });
+    res.json({ result: response.choices[0]?.message?.content || '' });
   } catch (error) {
-    console.error('Gemini API error:', error);
-    res.status(500).json({ error: error.message || 'AI generation failed' });
+    console.error('Groq error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
