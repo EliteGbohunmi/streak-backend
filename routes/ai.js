@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const Groq = require('groq-sdk');
 
-// Initialize Groq with your API key from environment
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 router.post('/generate', async (req, res) => {
@@ -13,14 +12,14 @@ router.post('/generate', async (req, res) => {
   }
 
   try {
-    // Simple system prompt – you can customise it later
+    // Default system prompt – you can customise later
     let systemPrompt = 'You are a creative content assistant for a creator accountability app. Write in a natural, authentic, and engaging voice. Avoid generic phrases and clichés. Be concise but insightful.';
 
     // (Optional: if you later add persona support, you can extend this)
     // For now, we ignore persona and userId – just use the default prompt.
 
     const response = await groq.chat.completions.create({
-      model: 'gpt-oss-2b',   // or 'llama3-70b-8192'
+      model: 'llama3-70b-8192',   // reliable and fast
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt }
