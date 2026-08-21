@@ -5,21 +5,17 @@ const Groq = require('groq-sdk');
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 router.post('/generate', async (req, res) => {
-  const { prompt, persona, userId } = req.body;
+  const { prompt } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'Prompt is required' });
   }
 
   try {
-    // Default system prompt – you can customise later
-    let systemPrompt = 'You are a creative content assistant for a creator accountability app. Write in a natural, authentic, and engaging voice. Avoid generic phrases and clichés. Be concise but insightful.';
-
-    // (Optional: if you later add persona support, you can extend this)
-    // For now, we ignore persona and userId – just use the default prompt.
+    const systemPrompt = 'You are a creative content assistant for a creator accountability app. Write in a natural, authentic, and engaging voice. Avoid generic phrases and clichés. Be concise but insightful.';
 
     const response = await groq.chat.completions.create({
-      model: 'llama3-70b-8192',   // reliable and fast
+      model: 'llama-3.1-70b-versatile',   // 👈 updated model
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt }
