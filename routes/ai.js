@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// Initialize Gemini with your API key
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 router.post('/generate', async (req, res) => {
@@ -13,15 +12,13 @@ router.post('/generate', async (req, res) => {
   }
 
   try {
-    // Get the model
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' }); // or 'gemini-1.5-pro'
+    // Use the updated model name
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
 
-    // Build the prompt
     const fullPrompt = `You are a creative content assistant for a creator accountability app. Write in a natural, authentic, and engaging voice. Avoid generic phrases and clichés. Be concise but insightful.
 
 User request: ${prompt}`;
 
-    // Generate content
     const result = await model.generateContent(fullPrompt);
     const response = await result.response;
     const text = response.text();
