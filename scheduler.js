@@ -179,3 +179,23 @@ function startScheduler() {
 }
 
 module.exports = { startScheduler };
+
+// ---- Auto‑end expired challenges ----
+cron.schedule('0 0 * * *', async () => {
+  try {
+    const now = new Date().toISOString();
+    // Find challenges where created_at + (days * interval '1 day') < now
+    const { data, error } = await supabase.rpc('end_expired_challenges'); // if you create a function
+    // Or use raw SQL via supabase.sql (if you have a custom function)
+    // If you don't have a function, you can update using a query:
+    const { error: updateErr } = await supabase
+      .from('challenges')
+      .update({ status: 'ended' })
+      .eq('status', 'active')
+      .lt('end_date', now);
+    if (updateErr) throw updateErr;
+    console.log('✅ Auto‑ended expired challenges.');
+  } catch (err) {
+    console.error('Challenge auto‑end job error:', err);
+  }
+});
