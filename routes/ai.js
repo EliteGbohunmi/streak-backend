@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const Groq = require('groq-sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+// Initialize Gemini with your API key
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 router.post('/generate', async (req, res) => {
   const { prompt } = req.body;
@@ -12,22 +13,22 @@ router.post('/generate', async (req, res) => {
   }
 
   try {
-    const systemPrompt = 'You are a creative content assistant for a creator accountability app. Write in a natural, authentic, and engaging voice. Avoid generic phrases and clichés. Be concise but insightful.';
+    // Get the model
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' }); // or 'gemini-1.5-pro'
 
-    const response = await groq.chat.completions.create({
-      model: 'qwen-3.6-27b',   // 👈 Qwen 3.6 27B (from your screenshot)
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.8,
-      max_tokens: 500,
-    });
+    // Build the prompt
+    const fullPrompt = `You are a creative content assistant for a creator accountability app. Write in a natural, authentic, and engaging voice. Avoid generic phrases and clichés. Be concise but insightful.
 
-    const result = response.choices[0]?.message?.content || '';
-    res.json({ result });
+User request: ${prompt}`;
+
+    // Generate content
+    const result = await model.generateContent(fullPrompt);
+    const response = await result.response;
+    const text = response.text();
+
+    res.json({ result: text });
   } catch (error) {
-    console.error('Groq API error:', error);
+    console.error('Gemini API error:', error);
     res.status(500).json({ error: error.message || 'AI generation failed' });
   }
 });
