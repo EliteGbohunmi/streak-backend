@@ -15,7 +15,7 @@ router.post('/generate', async (req, res) => {
     const systemPrompt = 'You are a creative content assistant for a creator accountability app. Write in a natural, authentic, and engaging voice. Avoid generic phrases and clichés. Be concise but insightful.';
 
     const response = await groq.chat.completions.create({
-      model: 'llama-3.1-70b-versatile',   // 👈 updated model
+      model: 'qwen-3.6-27b',   // 👈 Qwen 3.6 27B (from your screenshot)
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt }
