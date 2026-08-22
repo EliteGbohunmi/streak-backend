@@ -71,14 +71,15 @@ async function sendPush(userId, title, body, data = {}) {
   return success;
 }
 
+// ---- FIXED SendGrid email ----
 async function sendEmail(to, subject, html) {
   try {
     await sgMail.send({
       to,
-      from: process.env.SENDER_EMAIL,
+      from: { email: process.env.SENDER_EMAIL },   // ✅ object format
       subject,
       html,
-      replyTo: process.env.SENDER_EMAIL
+      replyTo: { email: process.env.SENDER_EMAIL }
     });
     console.log(`✅ Email sent to ${to}`);
     return true;
@@ -88,7 +89,6 @@ async function sendEmail(to, subject, html) {
   }
 }
 
-// Updated notifyUser with forceEmail option
 async function notifyUser(userId, title, body, data = {}, options = {}) {
   const { forceEmail = false } = options;
   const { data: profile } = await supabase
@@ -106,9 +106,6 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
     console.log('Push disabled – VAPID keys not set.');
   }
 
-  // Send email if:
-  // - forceEmail is true (scheduled jobs), OR
-  // - push failed (fallback)
   if (forceEmail || !pushed) {
     if (profile.email) {
       const fallbackHtml = `
