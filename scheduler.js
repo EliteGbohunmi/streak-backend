@@ -1,11 +1,11 @@
 const cron = require('node-cron');
 const supabase = require('./supabase');
-const { notifyUser, sendEmail } = require('./notificationService');
+const { notifyUser } = require('./notificationService');
 
 function startScheduler() {
   console.log('🕒 Scheduler started.');
 
-  // ---- Daily reminder at user's chosen time (every 15 minutes) ----
+  // ---- Daily reminder (every 15 minutes) ----
   cron.schedule('*/15 * * * *', async () => {
     try {
       const now = new Date();
@@ -34,7 +34,8 @@ function startScheduler() {
               profile.id,
               '🔥 Time to post!',
               `${profile.name || 'Creator'}, you haven't posted today. Don't break your streak!`,
-              { action: 'checkin' }
+              { action: 'checkin' },
+              { forceEmail: true }   // 👈 always send email
             );
           }
         }
@@ -59,7 +60,8 @@ function startScheduler() {
           s.user_id,
           '⏰ 4 hours left!',
           `Your ${s.current_streak}-day streak is at risk. Post something tonight to keep it alive.`,
-          { action: 'checkin' }
+          { action: 'checkin' },
+          { forceEmail: true }
         );
       }
     } catch (err) {
@@ -95,14 +97,16 @@ function startScheduler() {
             pair.user2_id,
             '👀 Your partner posted!',
             `${pair.profiles?.['profiles!accountability_partners_user1_id_fkey']?.name || 'Your partner'} already posted today. Don't let them down!`,
-            { action: 'checkin' }
+            { action: 'checkin' },
+            { forceEmail: true }
           );
         } else if (user2Posted && !user1Posted) {
           await notifyUser(
             pair.user1_id,
             '👀 Your partner posted!',
             `${pair.profiles?.['profiles!accountability_partners_user2_id_fkey']?.name || 'Your partner'} already posted today. Don't let them down!`,
-            { action: 'checkin' }
+            { action: 'checkin' },
+            { forceEmail: true }
           );
         }
       }
@@ -126,7 +130,8 @@ function startScheduler() {
           s.user_id,
           '💔 You missed today',
           `It happens. Tomorrow is a fresh start. What got in the way today?`,
-          { action: 'reflection' }
+          { action: 'reflection' },
+          { forceEmail: true }
         );
       }
     } catch (err) {
@@ -134,7 +139,7 @@ function startScheduler() {
     }
   });
 
-  // ---- Sunday 9am weekly summary ----
+  // ---- Sunday weekly summary ----
   cron.schedule('0 9 * * 0', async () => {
     try {
       const today = new Date();
@@ -167,7 +172,8 @@ function startScheduler() {
           profile.id,
           '📊 Your Weekly Summary',
           `${done} posts this week · ${rate}% completion · ${streak?.current_streak || 0} day streak. ${rate >= 80 ? 'Incredible week!' : rate >= 50 ? 'Solid effort. Keep pushing.' : 'New week, fresh start.'}`,
-          { action: 'analytics' }
+          { action: 'analytics' },
+          { forceEmail: true }
         );
       }
     } catch (err) {
@@ -179,23 +185,3 @@ function startScheduler() {
 }
 
 module.exports = { startScheduler };
-
-// ---- Auto‑end expired challenges ----
-cron.schedule('0 0 * * *', async () => {
-  try {
-    const now = new Date().toISOString();
-    // Find challenges where created_at + (days * interval '1 day') < now
-    const { data, error } = await supabase.rpc('end_expired_challenges'); // if you create a function
-    // Or use raw SQL via supabase.sql (if you have a custom function)
-    // If you don't have a function, you can update using a query:
-    const { error: updateErr } = await supabase
-      .from('challenges')
-      .update({ status: 'ended' })
-      .eq('status', 'active')
-      .lt('end_date', now);
-    if (updateErr) throw updateErr;
-    console.log('✅ Auto‑ended expired challenges.');
-  } catch (err) {
-    console.error('Challenge auto‑end job error:', err);
-  }
-});

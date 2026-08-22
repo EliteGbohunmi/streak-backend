@@ -14,7 +14,6 @@ try {
   console.warn('⚠️ VAPID setup failed (push disabled):', err.message);
 }
 
-// ----- Nudge messages (20 variations) -----
 const NUDGE_MESSAGES = [
   "Hey {to}, {from} is checking on you. Have you posted today? Don't break your streak!",
   "Your partner {from} nudged you, {to}. Time to post and keep that streak alive!",
@@ -42,8 +41,6 @@ function getRandomNudgeMessage(fromName, toName) {
   const raw = NUDGE_MESSAGES[Math.floor(Math.random() * NUDGE_MESSAGES.length)];
   return raw.replace(/{from}/g, fromName).replace(/{to}/g, toName);
 }
-
-// ----- Push / Email / Notification functions -----
 
 async function sendPush(userId, title, body, data = {}) {
   const { data: subs } = await supabase
@@ -91,7 +88,9 @@ async function sendEmail(to, subject, html) {
   }
 }
 
-async function notifyUser(userId, title, body, data = {}) {
+// Updated notifyUser with forceEmail option
+async function notifyUser(userId, title, body, data = {}, options = {}) {
+  const { forceEmail = false } = options;
   const { data: profile } = await supabase
     .from('profiles')
     .select('name, email')
@@ -107,18 +106,23 @@ async function notifyUser(userId, title, body, data = {}) {
     console.log('Push disabled – VAPID keys not set.');
   }
 
-  if (!pushed && profile.email) {
-    const fallbackHtml = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-        <h2 style="color: #F5A623;">🔥 Streak</h2>
-        <p style="font-size: 16px;">${body}</p>
-        <div style="text-align: center; margin: 20px 0;">
-          <a href="https://creator-accountability.netlify.app/dashboard" style="background: #F5A623; color: #000; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open Dashboard</a>
+  // Send email if:
+  // - forceEmail is true (scheduled jobs), OR
+  // - push failed (fallback)
+  if (forceEmail || !pushed) {
+    if (profile.email) {
+      const fallbackHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+          <h2 style="color: #F5A623;">🔥 Streak</h2>
+          <p style="font-size: 16px;">${body}</p>
+          <div style="text-align: center; margin: 20px 0;">
+            <a href="https://creator-accountability.netlify.app/dashboard" style="background: #F5A623; color: #000; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open Dashboard</a>
+          </div>
+          <p style="font-size: 12px; color: #999; text-align: center;">You're receiving this because you're part of Creator Accountability.</p>
         </div>
-        <p style="font-size: 12px; color: #999; text-align: center;">You're receiving this because you're part of Creator Accountability.</p>
-      </div>
-    `;
-    await sendEmail(profile.email, title, fallbackHtml);
+      `;
+      await sendEmail(profile.email, title, fallbackHtml);
+    }
   }
 }
 
