@@ -134,12 +134,32 @@ app.delete('/api/notifications/subscribe', async (req, res) => {
   res.json({ success: true });
 });
 
-// ---- Test notification endpoint ----
+// ---- Test notification (via notifyUser) ----
 app.post('/api/test-notify', async (req, res) => {
   const { userId, title, body } = req.body;
   if (!userId) return res.status(400).json({ error: 'Missing userId' });
   await notifyUser(userId, title || 'Test', body || 'Manual test', {});
   res.json({ success: true });
+});
+
+// ---- Direct email test (bypass profile) ----
+app.post('/test-send-email', async (req, res) => {
+  const { to, subject, html } = req.body;
+  if (!to) return res.status(400).json({ error: 'Missing "to" email' });
+  try {
+    const result = await sendEmail(
+      to,
+      subject || 'Test from Streak',
+      html || '<p>This is a direct test from your backend.</p>'
+    );
+    if (result) {
+      res.json({ success: true, message: `Email sent to ${to}` });
+    } else {
+      res.status(500).json({ error: 'SendGrid returned false – check logs' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ---- Broadcast email to all users ----
