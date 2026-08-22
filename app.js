@@ -14,9 +14,11 @@ process.on('unhandledRejection', (reason) => {
 
 const app = express();
 
+// ----- CORS with your new Vercel domain -----
 app.use(cors({
   origin: [
     'https://creator-accountability.netlify.app',
+    'https://creator-accountability.vercel.app',   // ✅ added
     'https://creator-accountability-obv8-eight.vercel.app',
     'http://localhost:5173',
     'http://localhost:3000'
@@ -135,20 +137,20 @@ app.delete('/api/notifications/subscribe', async (req, res) => {
   res.json({ success: true });
 });
 
-// ---- TEST EMAIL endpoint (manual trigger) ----
+// ---- Test email endpoint ----
 app.post('/api/test-email', async (req, res) => {
   const { email } = req.body;
   const testEmail = email || process.env.SENDER_EMAIL || 'your-email@example.com';
   try {
-    const { Resend } = require('resend');
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    const result = await resend.emails.send({
-      from: process.env.SENDER_EMAIL || 'onboarding@resend.dev',
+    const sgMail = require('@sendgrid/mail');
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+    await sgMail.send({
       to: testEmail,
-      subject: '🧪 Test email from Streak',
-      html: '<p>Your SMTP / Resend configuration is working correctly!</p>'
+      from: process.env.SENDER_EMAIL,
+      subject: '🧪 Test email from Streak (SendGrid)',
+      html: '<p>Your SendGrid configuration is working correctly!</p>'
     });
-    res.json({ success: true, message: `Test email sent to ${testEmail}`, result });
+    res.json({ success: true, message: `Test email sent to ${testEmail}` });
   } catch (err) {
     console.error('❌ Test email error:', err);
     res.status(500).json({ error: err.message });
