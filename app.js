@@ -134,12 +134,72 @@ app.delete('/api/notifications/subscribe', async (req, res) => {
   res.json({ success: true });
 });
 
-// ---- Test endpoint ----
+// ---- Test notification endpoint ----
 app.post('/api/test-notify', async (req, res) => {
   const { userId, title, body } = req.body;
   if (!userId) return res.status(400).json({ error: 'Missing userId' });
   await notifyUser(userId, title || 'Test', body || 'Manual test', {});
   res.json({ success: true });
+});
+
+// ---- Broadcast email to all users ----
+app.post('/api/admin/broadcast', async (req, res) => {
+  const { secret, subject, message } = req.body;
+
+  if (secret !== process.env.ADMIN_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (!subject || !message) {
+    return res.status(400).json({ error: 'Missing subject or message' });
+  }
+
+  try {
+    const { data: profiles, error } = await supabase
+      .from('profiles')
+      .select('email')
+      .not('email', 'is', null);
+
+    if (error) throw error;
+
+    let sent = 0;
+    const batchSize = 50;
+
+    for (let i = 0; i < profiles.length; i += batchSize) {
+      const batch = profiles.slice(i, i + batchSize);
+      await Promise.all(
+        batch.map(async (profile) => {
+          try {
+            await sendEmail(
+              profile.email,
+              subject,
+              `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+                <h2 style="color: #F5A623;">🔥 Streak</h2>
+                <p style="font-size: 16px; line-height: 1.6;">${message}</p>
+                <div style="text-align: center; margin: 20px 0;">
+                  <a href="https://creator-accountability.vercel.app/dashboard" style="background: #F5A623; color: #000; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">Go to Dashboard</a>
+                </div>
+                <p style="font-size: 12px; color: #999; text-align: center;">You're receiving this because you're part of Creator Accountability.</p>
+              </div>
+              `
+            );
+            sent++;
+          } catch (err) {
+            console.error(`Failed to send to ${profile.email}:`, err.message);
+          }
+        })
+      );
+      if (i + batchSize < profiles.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    res.json({ success: true, message: `Broadcast sent to ${sent} users` });
+  } catch (err) {
+    console.error('Broadcast error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ---- Start ----
