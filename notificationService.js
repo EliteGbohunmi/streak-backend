@@ -71,10 +71,11 @@ async function sendPush(userId, title, body, data = {}) {
   return success;
 }
 
+// ---- FIXED: uses your existing environment variable (SENDGRID_EMAIL) with fallback ----
 async function sendEmail(to, subject, html) {
-  const fromEmail = process.env.SENDER_EMAIL;
+  const fromEmail = process.env.SENDGRID_EMAIL || process.env.SENDER_EMAIL || process.env.FROM_EMAIL || 'elitegbohunmi@gmail.com';
   if (!fromEmail) {
-    console.error('❌ SENDER_EMAIL environment variable is not set.');
+    console.error('❌ No sender email found in environment.');
     return false;
   }
   try {
