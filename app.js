@@ -14,11 +14,10 @@ process.on('unhandledRejection', (reason) => {
 
 const app = express();
 
-// ----- CORS with your new Vercel domain -----
 app.use(cors({
   origin: [
     'https://creator-accountability.netlify.app',
-    'https://creator-accountability.vercel.app',   // ✅ added
+    'https://creator-accountability.vercel.app',
     'https://creator-accountability-obv8-eight.vercel.app',
     'http://localhost:5173',
     'http://localhost:3000'
@@ -27,17 +26,15 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// ---- Health ----
 app.get('/', (req, res) => res.send('OK'));
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ---- API Routes ----
 app.use('/api/community', require('./routes/community'));
 app.use('/api/ai', require('./routes/ai'));
 
-// ---- Nudge endpoint ----
+// ---- Nudge ----
 app.post('/api/notifications/nudge', async (req, res) => {
   const { from_user_id, to_user_id } = req.body;
   console.log('📨 Nudge from', from_user_id, 'to', to_user_id);
@@ -90,7 +87,7 @@ app.post('/api/notifications/nudge', async (req, res) => {
   }
 });
 
-// ---- Unread notifications ----
+// ---- Unread ----
 app.get('/api/notifications/unread', async (req, res) => {
   const { user_id } = req.query;
   if (!user_id) return res.status(400).json({ error: 'Missing user_id' });
@@ -115,7 +112,7 @@ app.post('/api/notifications/mark-read', async (req, res) => {
   res.json({ success: true });
 });
 
-// ---- VAPID & Push Subscription ----
+// ---- VAPID ----
 app.get('/api/notifications/vapid-key', (req, res) => {
   res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || '' });
 });
@@ -137,39 +134,23 @@ app.delete('/api/notifications/subscribe', async (req, res) => {
   res.json({ success: true });
 });
 
-// ---- Test email endpoint ----
-app.post('/api/test-email', async (req, res) => {
-  const { email } = req.body;
-  const testEmail = email || process.env.SENDER_EMAIL || 'your-email@example.com';
-  try {
-    const sgMail = require('@sendgrid/mail');
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-    await sgMail.send({
-      to: testEmail,
-      from: process.env.SENDER_EMAIL,
-      subject: '🧪 Test email from Streak (SendGrid)',
-      html: '<p>Your SendGrid configuration is working correctly!</p>'
-    });
-    res.json({ success: true, message: `Test email sent to ${testEmail}` });
-  } catch (err) {
-    console.error('❌ Test email error:', err);
-    res.status(500).json({ error: err.message });
-  }
+// ---- Test endpoint ----
+app.post('/api/test-notify', async (req, res) => {
+  const { userId, title, body } = req.body;
+  if (!userId) return res.status(400).json({ error: 'Missing userId' });
+  await notifyUser(userId, title || 'Test', body || 'Manual test', {});
+  res.json({ success: true });
 });
 
-// ---- Start server ----
+// ---- Start ----
 const PORT = process.env.PORT || 4000;
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend running on port ${PORT} (0.0.0.0)`);
   startScheduler();
 });
 
-// ---- Keep-alive ----
-setInterval(() => {
-  console.log('🔄 Keep-alive ping');
-}, 60000);
+setInterval(() => console.log('🔄 Keep-alive ping'), 60000);
 
-// ---- Graceful shutdown ----
 process.on('SIGTERM', () => {
   console.log('⚠️ SIGTERM received – shutting down gracefully');
   server.close(() => {
