@@ -71,15 +71,19 @@ async function sendPush(userId, title, body, data = {}) {
   return success;
 }
 
-// ---- FIXED SendGrid email ----
 async function sendEmail(to, subject, html) {
+  const fromEmail = process.env.SENDER_EMAIL;
+  if (!fromEmail) {
+    console.error('❌ SENDER_EMAIL environment variable is not set.');
+    return false;
+  }
   try {
     await sgMail.send({
       to,
-      from: { email: process.env.SENDER_EMAIL },   // ✅ object format
+      from: fromEmail,
       subject,
       html,
-      replyTo: { email: process.env.SENDER_EMAIL }
+      replyTo: fromEmail
     });
     console.log(`✅ Email sent to ${to}`);
     return true;
