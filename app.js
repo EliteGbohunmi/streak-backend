@@ -134,7 +134,7 @@ app.delete('/api/notifications/subscribe', async (req, res) => {
   res.json({ success: true });
 });
 
-// ---- Test notification (via notifyUser) ----
+// ---- Test notification ----
 app.post('/api/test-notify', async (req, res) => {
   const { userId, title, body } = req.body;
   if (!userId) return res.status(400).json({ error: 'Missing userId' });
@@ -142,7 +142,7 @@ app.post('/api/test-notify', async (req, res) => {
   res.json({ success: true });
 });
 
-// ---- Direct email test (bypass profile) ----
+// ---- Direct email test ----
 app.post('/test-send-email', async (req, res) => {
   const { to, subject, html } = req.body;
   if (!to) return res.status(400).json({ error: 'Missing "to" email' });
@@ -162,29 +162,23 @@ app.post('/test-send-email', async (req, res) => {
   }
 });
 
-// ---- Broadcast email to all users ----
+// ---- Broadcast ----
 app.post('/api/admin/broadcast', async (req, res) => {
   const { secret, subject, message } = req.body;
-
   if (secret !== process.env.ADMIN_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-
   if (!subject || !message) {
     return res.status(400).json({ error: 'Missing subject or message' });
   }
-
   try {
     const { data: profiles, error } = await supabase
       .from('profiles')
       .select('email')
       .not('email', 'is', null);
-
     if (error) throw error;
-
     let sent = 0;
     const batchSize = 50;
-
     for (let i = 0; i < profiles.length; i += batchSize) {
       const batch = profiles.slice(i, i + batchSize);
       await Promise.all(
@@ -210,14 +204,70 @@ app.post('/api/admin/broadcast', async (req, res) => {
           }
         })
       );
-      if (i + batchSize < profiles.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
+      if (i + batchSize < profiles.length) await new Promise(resolve => setTimeout(resolve, 1000));
     }
-
     res.json({ success: true, message: `Broadcast sent to ${sent} users` });
   } catch (err) {
     console.error('Broadcast error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// NEW: Suggest partners endpoint
+// ============================================================
+app.get('/api/partners/suggest', async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ error: 'Missing userId' });
+
+  try {
+    // 1. Get all partner IDs (both directions)
+    const { data: partners, error: pErr } = await supabase
+      .from('accountability_partners')
+      .select('user1_id, user2_id')
+      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
+
+    if (pErr) throw pErr;
+
+    const excludedIds = new Set();
+    partners?.forEach(p => {
+      excludedIds.add(p.user1_id);
+      excludedIds.add(p.user2_id);
+    });
+    excludedIds.delete(userId);
+
+    // 2. Get pending request IDs (sent or received)
+    const { data: requests, error: rErr } = await supabase
+      .from('partner_requests')
+      .select('sender_id, receiver_id')
+      .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+      .eq('status', 'pending');
+
+    if (rErr) throw rErr;
+
+    requests?.forEach(r => {
+      excludedIds.add(r.sender_id);
+      excludedIds.add(r.receiver_id);
+    });
+
+    // 3. Get active users (posted in the last 7 days) who are not excluded
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const cutoff = sevenDaysAgo.toISOString().split('T')[0];
+
+    const { data: activeUsers, error: aErr } = await supabase
+      .from('profiles')
+      .select('id, name, email, streaks!inner(last_checked_in)')
+      .not('id', 'in', `(${[...excludedIds].join(',') || '""'})`)
+      .neq('id', userId)
+      .gte('streaks.last_checked_in', cutoff)
+      .limit(10);
+
+    if (aErr) throw aErr;
+
+    res.json(activeUsers || []);
+  } catch (err) {
+    console.error('Suggest partners error:', err);
     res.status(500).json({ error: err.message });
   }
 });
