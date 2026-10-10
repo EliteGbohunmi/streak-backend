@@ -155,7 +155,7 @@ app.post('/test-send-email', async (req, res) => {
     if (result) {
       res.json({ success: true, message: `Email sent to ${to}` });
     } else {
-      res.status(500).json({ error: 'SendGrid returned false – check logs' });
+      res.status(500).json({ error: 'Nodemailer returned false – check logs' });
     }
   } catch (err) {
     res.status(500).json({ error: err.message });
