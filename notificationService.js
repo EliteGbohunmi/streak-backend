@@ -1,21 +1,5 @@
 const webpush = require('web-push');
-const nodemailer = require('nodemailer');
 const supabase = require('./supabase');
-
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD
-      ? process.env.GMAIL_APP_PASSWORD.replace(/\s/g, '')
-      : '',
-  },
-  connectionTimeout: 20000,
-  greetingTimeout: 20000,
-  socketTimeout: 20000,
-});
 
 try {
   webpush.setVapidDetails(
@@ -69,45 +53,72 @@ async function sendPush(userId, title, body, data = {}) {
   for (const sub of subs) {
     try {
       await webpush.sendNotification(
-        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        {
+          endpoint: sub.endpoint,
+          keys: { p256dh: sub.p256dh, auth: sub.auth }
+        },
         payload
       );
+
       success = true;
       await logNotification(userId, 'push', true, title);
     } catch (err) {
       if (err.statusCode === 410) {
-        await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+        await supabase
+          .from('push_subscriptions')
+          .delete()
+          .eq('endpoint', sub.endpoint);
       }
+
       await logNotification(userId, 'push', false, title, err.message);
     }
   }
+
   return success;
 }
 
 async function sendEmail(to, subject, html) {
-  const fromEmail = process.env.GMAIL_USER;
-  if (!fromEmail) {
-    console.error('❌ GMAIL_USER not set in environment.');
+  const functionUrl = process.env.EMAIL_FUNCTION_URL;
+  const functionSecret = process.env.EMAIL_FUNCTION_SECRET;
+
+  if (!functionUrl || !functionSecret) {
+    console.error('❌ Email function URL or secret is missing from Render.');
     return false;
   }
+
   try {
-    await transporter.sendMail({
-      from: `"Creator Accountability" <${fromEmail}>`,
-      to,
-      subject,
-      html,
-      replyTo: fromEmail,
+    const response = await fetch(functionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-email-secret': functionSecret
+      },
+      body: JSON.stringify({ to, subject, html }),
+      signal: AbortSignal.timeout(25000)
     });
-    console.log(`✅ Email sent to ${to}`);
+
+    const result = await response.json().catch(() => ({}));
+
+    if (!response.ok || !result.success) {
+      console.error(
+        '❌ Supabase email function failed:',
+        response.status,
+        result.error || 'Unknown error'
+      );
+      return false;
+    }
+
+    console.log(`✅ Email sent to ${to} through Supabase.`);
     return true;
   } catch (err) {
-    console.error('❌ Nodemailer error:', err.message);
+    console.error('❌ Email request failed:', err.message);
     return false;
   }
 }
 
 async function notifyUser(userId, title, body, data = {}, options = {}) {
   const { forceEmail = false } = options;
+
   const { data: profile } = await supabase
     .from('profiles')
     .select('name, email')
@@ -117,6 +128,7 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
   if (!profile) return;
 
   let pushed = false;
+
   if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
     pushed = await sendPush(userId, title, body, data);
   } else {
@@ -135,6 +147,7 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
           <p style="font-size: 12px; color: #999; text-align: center;">You're receiving this because you're part of Creator Accountability.</p>
         </div>
       `;
+
       await sendEmail(profile.email, title, fallbackHtml);
     }
   }
@@ -150,4 +163,9 @@ async function logNotification(userId, type, delivered, title, error = null) {
   });
 }
 
-module.exports = { sendPush, sendEmail, notifyUser, getRandomNudgeMessage };
+module.exports = {
+  sendPush,
+  sendEmail,
+  notifyUser,
+  getRandomNudgeMessage
+};
