@@ -2,15 +2,19 @@ const webpush = require('web-push');
 const nodemailer = require('nodemailer');
 const supabase = require('./supabase');
 
-// ---- Nodemailer transporter (Gmail SMTP) ----
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,
+  port: 587,
+  secure: false,
   auth: {
     user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
+    pass: process.env.GMAIL_APP_PASSWORD
+      ? process.env.GMAIL_APP_PASSWORD.replace(/\s/g, '')
+      : '',
   },
+  connectionTimeout: 20000,
+  greetingTimeout: 20000,
+  socketTimeout: 20000,
 });
 
 try {
@@ -80,7 +84,6 @@ async function sendPush(userId, title, body, data = {}) {
   return success;
 }
 
-// ---- Nodemailer email sender ----
 async function sendEmail(to, subject, html) {
   const fromEmail = process.env.GMAIL_USER;
   if (!fromEmail) {
