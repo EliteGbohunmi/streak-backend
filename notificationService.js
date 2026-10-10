@@ -1,8 +1,17 @@
 const webpush = require('web-push');
-const sgMail = require('@sendgrid/mail');
+const nodemailer = require('nodemailer');
 const supabase = require('./supabase');
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+// ---- Nodemailer transporter (Gmail SMTP) ----
+const transporter = nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+});
 
 try {
   webpush.setVapidDetails(
@@ -71,25 +80,25 @@ async function sendPush(userId, title, body, data = {}) {
   return success;
 }
 
-// ---- FIXED: uses your existing environment variable (SENDGRID_EMAIL) with fallback ----
+// ---- Nodemailer email sender ----
 async function sendEmail(to, subject, html) {
-  const fromEmail = process.env.SENDGRID_EMAIL || process.env.SENDER_EMAIL || process.env.FROM_EMAIL || 'elitegbohunmi@gmail.com';
+  const fromEmail = process.env.GMAIL_USER;
   if (!fromEmail) {
-    console.error('❌ No sender email found in environment.');
+    console.error('❌ GMAIL_USER not set in environment.');
     return false;
   }
   try {
-    await sgMail.send({
+    await transporter.sendMail({
+      from: `"Creator Accountability" <${fromEmail}>`,
       to,
-      from: fromEmail,
       subject,
       html,
-      replyTo: fromEmail
+      replyTo: fromEmail,
     });
     console.log(`✅ Email sent to ${to}`);
     return true;
   } catch (err) {
-    console.error('❌ SendGrid error:', err.response?.body || err.message);
+    console.error('❌ Nodemailer error:', err.message);
     return false;
   }
 }
