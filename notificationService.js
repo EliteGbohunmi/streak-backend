@@ -125,7 +125,7 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
     .eq('id', userId)
     .single();
 
-  if (!profile) return;
+  if (!profile) return { success: false, reason: 'profile_not_found' };
 
   let pushed = false;
 
@@ -134,6 +134,8 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
   } else {
     console.log('Push disabled – VAPID keys not set.');
   }
+
+  let emailSent = false;
 
   if (forceEmail || !pushed) {
     if (profile.email) {
@@ -148,9 +150,15 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
         </div>
       `;
 
-      await sendEmail(profile.email, title, fallbackHtml);
+      emailSent = await sendEmail(profile.email, title, fallbackHtml);
     }
   }
+
+  return {
+    success: forceEmail ? emailSent : (pushed || emailSent),
+    emailSent,
+    pushed
+  };
 }
 
 async function logNotification(userId, type, delivered, title, error = null) {

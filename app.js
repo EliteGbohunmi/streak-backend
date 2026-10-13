@@ -636,7 +636,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend running on port ${PORT} (0.0.0.0)`);
 
   try {
-    startScheduler();
+    if (process.env.ENABLE_RENDER_SCHEDULER === 'true') startScheduler();
   } catch (err) {
     console.error('Scheduler startup error:', err);
   }
