@@ -16,6 +16,7 @@ function getLagosTime() {
   }).formatToParts(new Date());
 
   const result = {};
+
   for (const part of parts) {
     result[part.type] = part.value;
   }
@@ -67,8 +68,13 @@ async function sendOnce(jobKey, userId, today, title, body, data = {}) {
     claimed = await claimNotification(jobKey, userId, today);
 
     if (!claimed) {
+      console.log(
+        `[SKIP] ${jobKey}: notification already recorded for user ${userId}`
+      );
       return;
     }
+
+    console.log(`[ATTEMPT] ${jobKey} for user ${userId}`);
 
     const result = await notifyUser(
       userId,
@@ -80,7 +86,8 @@ async function sendOnce(jobKey, userId, today, title, body, data = {}) {
 
     if (!result?.success) {
       throw new Error(
-        `Notification delivery failed for user ${userId}`
+        `Notification delivery failed for user ${userId}. ` +
+        `Reason: ${result?.reason || 'delivery unsuccessful'}`
       );
     }
 
@@ -96,20 +103,34 @@ async function sendOnce(jobKey, userId, today, title, body, data = {}) {
       .eq('scheduled_for', today);
 
     if (error) {
-      console.error('Could not update notification status:', error.message);
+      console.error(
+        '[DB ERROR] Could not update notification status:',
+        error.message
+      );
     }
 
-    console.log(`Sent ${jobKey} to ${userId}`);
+    console.log(
+      `[SENT] ${jobKey} to user ${userId}. ` +
+      `Email: ${result.emailSent ? 'success' : 'not confirmed'}; ` +
+      `Push: ${result.pushed ? 'success' : 'not confirmed'}`
+    );
   } catch (error) {
-    console.error(`${jobKey} failed for ${userId}:`, error.message);
+    console.error(`[FAILED] ${jobKey} for user ${userId}:`, error.message);
 
     if (claimed) {
-      await supabase
+      const { error: deleteError } = await supabase
         .from('scheduled_notification_runs')
         .delete()
         .eq('job_key', jobKey)
         .eq('recipient_id', String(userId))
         .eq('scheduled_for', today);
+
+      if (deleteError) {
+        console.error(
+          '[DB ERROR] Could not release notification claim:',
+          deleteError.message
+        );
+      }
     }
   }
 }
@@ -127,14 +148,26 @@ async function getRows(table, columns, configure = q => q) {
 }
 
 async function dailyReminders(now) {
+  console.log('[DAILY] Checking profiles with reminder settings...');
+
   const profiles = await getRows(
     'profiles',
     'id, name, email, reminder_hour, reminder_minute',
     q => q.not('reminder_hour', 'is', null)
   );
 
+  let missingDetails = 0;
+  let outsideWindow = 0;
+  let alreadyCheckedIn = 0;
+  let eligible = 0;
+
+  console.log(`[DAILY] Profiles with reminder hours: ${profiles.length}`);
+
   for (const profile of profiles) {
-    if (!profile.email || profile.reminder_minute == null) continue;
+    if (!profile.email || profile.reminder_minute == null) {
+      missingDetails++;
+      continue;
+    }
 
     const target =
       Number(profile.reminder_hour) * 60 +
@@ -143,7 +176,10 @@ async function dailyReminders(now) {
     const age = now.minutes - target;
 
     // Allow a 25-minute delivery window for delayed workflow runs.
-    if (age < 0 || age > 25) continue;
+    if (age < 0 || age > 25) {
+      outsideWindow++;
+      continue;
+    }
 
     const { data: streak, error } = await supabase
       .from('streaks')
@@ -151,9 +187,16 @@ async function dailyReminders(now) {
       .eq('user_id', profile.id)
       .maybeSingle();
 
-    if (error) throw error;
+    if (error) {
+      throw error;
+    }
 
-    if (checkedInToday(streak?.last_checked_in, now.date)) continue;
+    if (checkedInToday(streak?.last_checked_in, now.date)) {
+      alreadyCheckedIn++;
+      continue;
+    }
+
+    eligible++;
 
     await sendOnce(
       'daily_reminder',
@@ -164,10 +207,23 @@ async function dailyReminders(now) {
       { action: 'checkin' }
     );
   }
+
+  console.log(
+    `[DAILY SUMMARY] Eligible: ${eligible}; ` +
+    `outside reminder window: ${outsideWindow}; ` +
+    `missing email/minute: ${missingDetails}; ` +
+    `already checked in: ${alreadyCheckedIn}`
+  );
 }
 
 async function eveningWarnings(now) {
-  if (now.hour !== 20) return;
+  if (now.hour !== 20) {
+    console.log(
+      `[SKIP] Evening warnings only run at 20:00 WAT. ` +
+      `Current hour: ${now.hour}.`
+    );
+    return;
+  }
 
   const streaks = await getRows(
     'streaks',
@@ -175,8 +231,15 @@ async function eveningWarnings(now) {
     q => q.gt('current_streak', 0)
   );
 
+  console.log(`[EVENING] Active streaks found: ${streaks.length}`);
+
   for (const streak of streaks) {
-    if (checkedInToday(streak.last_checked_in, now.date)) continue;
+    if (checkedInToday(streak.last_checked_in, now.date)) {
+      console.log(
+        `[SKIP] Evening warning: user ${streak.user_id} already checked in.`
+      );
+      continue;
+    }
 
     await sendOnce(
       'evening_warning',
@@ -190,12 +253,20 @@ async function eveningWarnings(now) {
 }
 
 async function partnerAlerts(now) {
-  if (now.hour !== 9) return;
+  if (now.hour !== 9) {
+    console.log(
+      `[SKIP] Partner alerts only run during the 09:00 hour WAT. ` +
+      `Current hour: ${now.hour}.`
+    );
+    return;
+  }
 
   const pairs = await getRows(
     'accountability_partners',
     'user1_id, user2_id'
   );
+
+  console.log(`[PARTNERS] Accountability pairs found: ${pairs.length}`);
 
   for (const pair of pairs) {
     const [a, b] = await Promise.all([
@@ -216,14 +287,22 @@ async function partnerAlerts(now) {
     if (b.error) throw b.error;
 
     const user1Posted = checkedInToday(
-      a.data?.last_checked_in, now.date
+      a.data?.last_checked_in,
+      now.date
     );
 
     const user2Posted = checkedInToday(
-      b.data?.last_checked_in, now.date
+      b.data?.last_checked_in,
+      now.date
     );
 
-    if (user1Posted === user2Posted) continue;
+    if (user1Posted === user2Posted) {
+      console.log(
+        `[SKIP] Partner pair ${pair.user1_id}/${pair.user2_id}: ` +
+        'both posted or neither posted.'
+      );
+      continue;
+    }
 
     const postedUserId = user1Posted
       ? pair.user1_id
@@ -253,7 +332,13 @@ async function partnerAlerts(now) {
 }
 
 async function missedDayFollowups(now) {
-  if (now.hour !== 23) return;
+  if (now.hour !== 23) {
+    console.log(
+      `[SKIP] Missed-day follow-ups only run during the 23:00 hour WAT. ` +
+      `Current hour: ${now.hour}.`
+    );
+    return;
+  }
 
   const streaks = await getRows(
     'streaks',
@@ -261,8 +346,15 @@ async function missedDayFollowups(now) {
     q => q.gt('current_streak', 2)
   );
 
+  console.log(`[MISSED DAY] Streaks over two days found: ${streaks.length}`);
+
   for (const streak of streaks) {
-    if (checkedInToday(streak.last_checked_in, now.date)) continue;
+    if (checkedInToday(streak.last_checked_in, now.date)) {
+      console.log(
+        `[SKIP] Missed-day follow-up: user ${streak.user_id} checked in today.`
+      );
+      continue;
+    }
 
     await sendOnce(
       'missed_day_followup',
@@ -276,17 +368,30 @@ async function missedDayFollowups(now) {
 }
 
 async function weeklySummaries(now) {
-  if (now.weekday !== 'Sun' || now.hour !== 9) return;
+  if (now.weekday !== 'Sun' || now.hour !== 9) {
+    console.log(
+      `[SKIP] Weekly summaries run Sunday during the 09:00 hour WAT. ` +
+      `Current day/hour: ${now.weekday} ${now.hour}.`
+    );
+    return;
+  }
 
   const profiles = await getRows(
     'profiles',
     'id, name, email'
   );
 
+  console.log(`[WEEKLY] Profiles found: ${profiles.length}`);
+
   const weekAgo = dateDaysAgo(now.date, 7);
 
   for (const profile of profiles) {
-    if (!profile.email) continue;
+    if (!profile.email) {
+      console.log(
+        `[SKIP] Weekly summary: profile ${profile.id} has no email.`
+      );
+      continue;
+    }
 
     const { data: tasks, error: taskError } = await supabase
       .from('tasks')
@@ -338,11 +443,25 @@ async function main() {
     `${String(now.minute).padStart(2, '0')} WAT`
   );
 
-  await dailyReminders(now);
-  await eveningWarnings(now);
-  await partnerAlerts(now);
-  await missedDayFollowups(now);
-  await weeklySummaries(now);
+  const jobs = [
+    ['Daily reminders', dailyReminders],
+    ['Evening warnings', eveningWarnings],
+    ['Partner alerts', partnerAlerts],
+    ['Missed-day follow-ups', missedDayFollowups],
+    ['Weekly summaries', weeklySummaries]
+  ];
+
+  for (const [name, job] of jobs) {
+    console.log(`[START] ${name}`);
+
+    try {
+      await job(now);
+      console.log(`[DONE] ${name}`);
+    } catch (error) {
+      console.error(`[FAILED] ${name}:`, error.message);
+      throw error;
+    }
+  }
 
   console.log('Scheduled notification run finished.');
 }
