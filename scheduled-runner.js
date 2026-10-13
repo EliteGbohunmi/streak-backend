@@ -2,6 +2,8 @@ const supabase = require('./supabase');
 const { notifyUser } = require('./notificationService');
 
 const TIME_ZONE = 'Africa/Lagos';
+const DEFAULT_REMINDER_HOUR = 8;
+const DEFAULT_REMINDER_MINUTE = 0;
 
 function getLagosTime() {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -148,31 +150,60 @@ async function getRows(table, columns, configure = q => q) {
 }
 
 async function dailyReminders(now) {
-  console.log('[DAILY] Checking profiles with reminder settings...');
+  console.log('[DAILY] Checking profiles for reminders...');
 
   const profiles = await getRows(
     'profiles',
-    'id, name, email, reminder_hour, reminder_minute',
-    q => q.not('reminder_hour', 'is', null)
+    'id, name, email, reminder_hour, reminder_minute'
   );
 
-  let missingDetails = 0;
+  let missingEmail = 0;
   let outsideWindow = 0;
   let alreadyCheckedIn = 0;
   let eligible = 0;
+  let defaultedReminders = 0;
 
-  console.log(`[DAILY] Profiles with reminder hours: ${profiles.length}`);
+  console.log(`[DAILY] Profiles found: ${profiles.length}`);
 
   for (const profile of profiles) {
-    if (!profile.email || profile.reminder_minute == null) {
-      missingDetails++;
+    if (!profile.email) {
+      missingEmail++;
       continue;
     }
 
-    const target =
-      Number(profile.reminder_hour) * 60 +
-      Number(profile.reminder_minute);
+    const usesDefault =
+      profile.reminder_hour == null ||
+      profile.reminder_minute == null;
 
+    const reminderHour =
+      profile.reminder_hour == null
+        ? DEFAULT_REMINDER_HOUR
+        : Number(profile.reminder_hour);
+
+    const reminderMinute =
+      profile.reminder_minute == null
+        ? DEFAULT_REMINDER_MINUTE
+        : Number(profile.reminder_minute);
+
+    if (
+      !Number.isInteger(reminderHour) ||
+      reminderHour < 0 ||
+      reminderHour > 23 ||
+      !Number.isInteger(reminderMinute) ||
+      reminderMinute < 0 ||
+      reminderMinute > 59
+    ) {
+      console.error(
+        `[SKIP] Invalid reminder settings for user ${profile.id}`
+      );
+      continue;
+    }
+
+    if (usesDefault) {
+      defaultedReminders++;
+    }
+
+    const target = reminderHour * 60 + reminderMinute;
     const age = now.minutes - target;
 
     // Allow a 25-minute delivery window for delayed workflow runs.
@@ -211,8 +242,9 @@ async function dailyReminders(now) {
   console.log(
     `[DAILY SUMMARY] Eligible: ${eligible}; ` +
     `outside reminder window: ${outsideWindow}; ` +
-    `missing email/minute: ${missingDetails}; ` +
-    `already checked in: ${alreadyCheckedIn}`
+    `missing email: ${missingEmail}; ` +
+    `already checked in: ${alreadyCheckedIn}; ` +
+    `using default 8:00 AM: ${defaultedReminders}`
   );
 }
 
