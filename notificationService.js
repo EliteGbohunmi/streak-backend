@@ -81,7 +81,7 @@ async function sendPush(userId, title, body, data = {}) {
       );
 
       success = true;
-      await logNotification(userId, 'push', true, title);
+      await logNotification(userId, 'push', true, title, null, body, data && data.action ? data.action : null);
     } catch (err) {
       if (err.statusCode === 410) {
         await supabase
@@ -90,7 +90,7 @@ async function sendPush(userId, title, body, data = {}) {
           .eq('endpoint', sub.endpoint);
       }
 
-      await logNotification(userId, 'push', false, title, err.message);
+      await logNotification(userId, 'push', false, title, err.message, body, data && data.action ? data.action : null);
     }
   }
 
@@ -181,12 +181,15 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
   };
 }
 
-async function logNotification(userId, type, delivered, title, error = null) {
+async function logNotification(userId, type, delivered, title, error = null, body = null, action = null) {
   await supabase.from('notification_log').insert({
     user_id: userId,
     type,
     delivered,
     error,
+    title: title || null,
+    body: body || null,
+    action: action || null,
     metadata: { title }
   });
 }

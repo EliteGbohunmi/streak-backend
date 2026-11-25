@@ -709,6 +709,54 @@ app.post('/api/proof/accept', async (req, res) => {
   }
 });
 
+
+app.get('/api/notifications/list', async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ error: 'email required' });
+    const supabase = require('./supabase');
+    const { data: profile } = await supabase.from('profiles').select('id').eq('email', email).single();
+    if (!profile) return res.status(404).json({ error: 'profile not found' });
+    const { data, error } = await supabase
+      .from('notification_log')
+      .select('id, title, body, type, action, read_at, created_at, delivered')
+      .eq('user_id', profile.id)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) return res.status(500).json({ error: error.message });
+    const unread = (data || []).filter(n => !n.read_at).length;
+    res.json({ notifications: data || [], unread });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/notifications/read', async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const supabase = require('./supabase');
+    await supabase.from('notification_log').update({ read_at: new Date().toISOString() }).eq('id', id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/notifications/read-all', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'email required' });
+    const supabase = require('./supabase');
+    const { data: profile } = await supabase.from('profiles').select('id').eq('email', email).single();
+    if (!profile) return res.status(404).json({ error: 'profile not found' });
+    await supabase.from('notification_log').update({ read_at: new Date().toISOString() }).eq('user_id', profile.id).is('read_at', null);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend running on port ${PORT} (0.0.0.0)`);
 
