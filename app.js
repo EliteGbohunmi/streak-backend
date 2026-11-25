@@ -780,6 +780,16 @@ app.post('/api/notifications/broadcast', async (req, res) => {
     for (const profile of profiles || []) {
       try {
         await notifyUser(profile.id, title, body, { action: 'system', ...(metadata || {}) });
+        // broadcast log — ensure it's in notification_log even if logNotification failed
+        await supabase.from('notification_log').insert({
+          user_id: profile.id,
+          type: 'system',
+          delivered: true,
+          title,
+          body,
+          action: 'system',
+          metadata: metadata || {}
+        });
         sent++;
       } catch (e) {
         console.error('Broadcast failed for', profile.id, e.message);
