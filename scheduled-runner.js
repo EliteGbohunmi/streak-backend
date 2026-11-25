@@ -95,7 +95,7 @@ async function sendOnce(jobKey, userId, today, title, body, data = {}) {
       title,
       body,
       data,
-      { forceEmail: true }
+      {}
     );
 
     if (!result?.success) {
