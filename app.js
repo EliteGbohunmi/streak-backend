@@ -662,6 +662,31 @@ app.post('/api/push/subscribe', async (req, res) => {
   }
 });
 
+
+app.post('/api/test-push', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'email required' });
+    const supabase = require('./supabase');
+    const { notifyUser } = require('./notificationService');
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('id, name')
+      .eq('email', email)
+      .single();
+    if (error || !profile) return res.status(404).json({ error: 'profile not found' });
+    const result = await notifyUser(
+      profile.id,
+      'Test Notification',
+      'If you see this, push is working.',
+      { action: 'checkin' }
+    );
+    res.json({ sentTo: profile.name, result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend running on port ${PORT} (0.0.0.0)`);
 
