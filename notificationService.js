@@ -8,30 +8,30 @@ try {
     process.env.VAPID_PRIVATE_KEY
   );
 } catch (err) {
-  console.warn('⚠️ VAPID setup failed (push disabled):', err.message);
+  console.warn('VAPID setup failed (push disabled):', err.message);
 }
 
 const NUDGE_MESSAGES = [
-  "Hey {to}, {from} is checking on you. Have you posted today? Don't break your streak!",
-  "Your partner {from} nudged you, {to}. Time to post and keep that streak alive!",
-  "{to}, {from} just sent a nudge – you're falling behind! Post something now.",
-  "Accountability check! {from} reminded you to post, {to}. Don't let them down.",
-  "{to}, your streak is at risk! {from} is counting on you to post today.",
-  "Hey {to}, {from} noticed you haven't posted yet. Let's go!",
-  "{from} says: '{to}, get that post up! Your streak depends on it.'",
+  "Hey {to}, {from} is checking on you. Have you posted today? Don't break your streak.",
+  "Your partner {from} nudged you, {to}. Time to post and keep that streak alive.",
+  "{to}, {from} just sent a nudge - you're falling behind. Post something now.",
+  "Accountability check. {from} reminded you to post, {to}. Don't let them down.",
+  "{to}, your streak is at risk. {from} is counting on you to post today.",
+  "Hey {to}, {from} noticed you haven't posted yet. Let's go.",
+  "{from} says: {to}, get that post up. Your streak depends on it.",
   "{to}, this is your nudge from {from}. One post today keeps the flame alive.",
-  "Don't break the chain, {to}. {from} believes in you – post now!",
-  "{to}, {from} is waiting for your post. You've got this!",
+  "Don't break the chain, {to}. {from} believes in you. Post now.",
+  "{to}, {from} is waiting for your post. You've got this.",
   "Time to create, {to}. {from} just nudged you to share your work.",
-  "{to}, your partner {from} is holding you accountable. Post something!",
-  "Nudge from {from}: '{to}, what are you waiting for? Post today!'",
-  "{to}, {from} checked in and saw you missed today. Let's fix that!",
-  "Hey {to}, {from} is on fire – don't let the streak die. Post now!",
+  "{to}, your partner {from} is holding you accountable. Post something.",
+  "Nudge from {from}: {to}, what are you waiting for? Post today.",
+  "{to}, {from} checked in and saw you missed today. Let's fix that.",
+  "Hey {to}, {from} is on fire. Don't let the streak die. Post now.",
   "{to}, this is your reminder from {from} to post. You'll thank yourself later.",
-  "Accountability partner {from} says: '{to}, don't procrastinate – post today!'",
-  "{to}, {from} is watching your streak. Keep it going with one post!",
-  "Nudge! {from} wants to see your post, {to}. The community is waiting.",
-  "{to}, {from} just sent a nudge – it's your turn to create something amazing!"
+  "Accountability partner {from} says: {to}, don't procrastinate. Post today.",
+  "{to}, {from} is watching your streak. Keep it going with one post.",
+  "Nudge. {from} wants to see your post, {to}. The community is waiting.",
+  "{to}, {from} just sent a nudge. It's your turn to create something amazing."
 ];
 
 function getRandomNudgeMessage(fromName, toName) {
@@ -47,7 +47,20 @@ async function sendPush(userId, title, body, data = {}) {
 
   if (!subs || subs.length === 0) return false;
 
-  const payload = JSON.stringify({ title, body, data, icon: '/icon-192.png' });
+  const payload = JSON.stringify({
+    title: title,
+    body: body,
+    icon: '/app-icon.png',
+    image: data.image || '/notification-banner.svg',
+    badge: '/badge-icon.svg',
+    vibrate: [200, 100, 200],
+    actions: data.actions || [
+      { action: 'checkin', title: 'I Posted' },
+      { action: 'dismiss', title: 'Dismiss' }
+    ],
+    data: data
+  });
+
   let success = false;
 
   for (const sub of subs) {
@@ -82,7 +95,7 @@ async function sendEmail(to, subject, html) {
   const functionSecret = process.env.EMAIL_FUNCTION_SECRET;
 
   if (!functionUrl || !functionSecret) {
-    console.error('❌ Email function URL or secret is missing from Render.');
+    console.error('Email function URL or secret is missing.');
     return false;
   }
 
@@ -101,17 +114,17 @@ async function sendEmail(to, subject, html) {
 
     if (!response.ok || !result.success) {
       console.error(
-        '❌ Supabase email function failed:',
+        'Supabase email function failed:',
         response.status,
         result.error || 'Unknown error'
       );
       return false;
     }
 
-    console.log(`✅ Email sent to ${to} through Supabase.`);
+    console.log(`Email sent to ${to} through Supabase.`);
     return true;
   } catch (err) {
-    console.error('❌ Email request failed:', err.message);
+    console.error('Email request failed:', err.message);
     return false;
   }
 }
@@ -132,7 +145,7 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
   if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
     pushed = await sendPush(userId, title, body, data);
   } else {
-    console.log('Push disabled – VAPID keys not set.');
+    console.log('Push disabled - VAPID keys not set.');
   }
 
   let emailSent = false;
@@ -141,7 +154,7 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
     if (profile.email) {
       const fallbackHtml = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-          <h2 style="color: #F5A623;">🔥 Streak</h2>
+          <h2 style="color: #F5A623;">Streak</h2>
           <p style="font-size: 16px;">${body}</p>
           <div style="text-align: center; margin: 20px 0;">
             <a href="https://creator-accountability.netlify.app/dashboard" style="background: #F5A623; color: #000; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open Dashboard</a>

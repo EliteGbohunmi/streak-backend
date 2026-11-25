@@ -632,7 +632,37 @@ app.get('/api/partners/suggest', async (req, res) => {
 // ---- Start server ----
 const PORT = process.env.PORT || 4000;
 
-const server = app.listen(PORT, '0.0.0.0', () => {
+const server = 
+app.post('/api/push/subscribe', async (req, res) => {
+  try {
+    const { userId, subscription } = req.body;
+    if (!userId || !subscription?.endpoint || !subscription?.keys) {
+      return res.status(400).json({ error: 'Missing userId or subscription' });
+    }
+    const supabase = require('./supabase');
+    const { error } = await supabase
+      .from('push_subscriptions')
+      .upsert(
+        {
+          user_id: userId,
+          endpoint: subscription.endpoint,
+          p256dh: subscription.keys.p256dh,
+          auth: subscription.keys.auth
+        },
+        { onConflict: 'endpoint' }
+      );
+    if (error) {
+      console.error('Push subscribe DB error:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Push subscribe error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend running on port ${PORT} (0.0.0.0)`);
 
   try {
