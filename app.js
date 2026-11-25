@@ -715,18 +715,29 @@ app.get('/api/notifications/list', async (req, res) => {
     const { email } = req.query;
     if (!email) return res.status(400).json({ error: 'email required' });
     const supabase = require('./supabase');
-    const { data: profile } = await supabase.from('profiles').select('id').eq('email', email).single();
-    if (!profile) return res.status(404).json({ error: 'profile not found' });
+    const { data: profile, error: pErr } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .single();
+    if (pErr || !profile) {
+      console.error('Profile lookup failed:', pErr?.message);
+      return res.status(404).json({ error: 'profile not found' });
+    }
     const { data, error } = await supabase
       .from('notification_log')
       .select('id, title, body, type, action, read_at, sent_at, delivered')
       .eq('user_id', profile.id)
-      .order('created_at', { ascending: false })
+      .order('sent_at', { ascending: false })
       .limit(50);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      console.error('Notification list query failed:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
     const unread = (data || []).filter(n => !n.read_at).length;
     res.json({ notifications: data || [], unread });
   } catch (err) {
+    console.error('Notification list error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
