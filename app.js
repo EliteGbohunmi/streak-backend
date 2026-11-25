@@ -687,6 +687,28 @@ app.post('/api/test-push', async (req, res) => {
   }
 });
 
+
+app.post('/api/proof/accept', async (req, res) => {
+  try {
+    const { proofId, partnerEmail } = req.body;
+    if (!proofId || !partnerEmail) return res.status(400).json({ error: 'proofId and partnerEmail required' });
+    const supabase = require('./supabase');
+    const { data: partner } = await supabase.from('profiles').select('id').eq('email', partnerEmail).single();
+    if (!partner) return res.status(404).json({ error: 'partner not found' });
+    const { data: updated, error } = await supabase
+      .from('checkin_proofs')
+      .update({ status: 'confirmed', confirmed_by: partner.id, confirmed_at: new Date().toISOString() })
+      .eq('id', proofId)
+      .eq('status', 'pending')
+      .select();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!updated || updated.length === 0) return res.status(409).json({ error: 'already confirmed or not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend running on port ${PORT} (0.0.0.0)`);
 
