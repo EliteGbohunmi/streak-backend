@@ -54,10 +54,17 @@ async function sendPush(userId, title, body, data = {}) {
     image: data.image || '/notification-banner.svg',
     badge: '/badge-icon.svg',
     vibrate: [200, 100, 200],
-    actions: data.actions || [
-      { action: 'checkin', title: 'I Posted' },
-      { action: 'dismiss', title: 'Dismiss' }
-    ],
+    actions: data.actions || (
+      data.action === 'partner_proof' && data.proofId
+        ? [
+            { action: 'view', title: 'View' },
+            { action: 'accept', title: 'Accept' }
+          ]
+        : [
+            { action: 'checkin', title: 'I Posted' },
+            { action: 'dismiss', title: 'Dismiss' }
+          ]
+    ),
     data: data
   });
 
