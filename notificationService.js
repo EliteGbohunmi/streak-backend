@@ -60,8 +60,6 @@ async function sendPush(userId, title, body, data = {}) {
             { action: 'view', title: 'View' },
             { action: 'accept', title: 'Accept' }
           ]
-        : data.action === 'system'
-        ? []
         : [
             { action: 'checkin', title: 'I Posted' },
             { action: 'dismiss', title: 'Dismiss' }
