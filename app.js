@@ -757,6 +757,41 @@ app.post('/api/notifications/read-all', async (req, res) => {
   }
 });
 
+
+app.post('/api/notifications/broadcast', async (req, res) => {
+  try {
+    const { adminSecret, title, body, metadata } = req.body;
+    if (adminSecret !== process.env.ADMIN_SECRET) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+    if (!title || !body) {
+      return res.status(400).json({ error: 'title and body required' });
+    }
+    const supabase = require('./supabase');
+    const { notifyUser } = require('./notificationService');
+
+    const { data: profiles, error } = await supabase
+      .from('profiles')
+      .select('id');
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    let sent = 0;
+    for (const profile of profiles || []) {
+      try {
+        await notifyUser(profile.id, title, body, { action: 'system', ...(metadata || {}) });
+        sent++;
+      } catch (e) {
+        console.error('Broadcast failed for', profile.id, e.message);
+      }
+    }
+
+    res.json({ success: true, sent, total: (profiles || []).length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend running on port ${PORT} (0.0.0.0)`);
 
