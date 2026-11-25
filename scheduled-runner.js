@@ -1,9 +1,21 @@
 const supabase = require('./supabase');
 const { notifyUser } = require('./notificationService');
+const { pickMessage, buildIndexUpdate } = require('./notificationTemplates');
 
 const TIME_ZONE = 'Africa/Lagos';
 const DEFAULT_REMINDER_HOUR = 8;
 const DEFAULT_REMINDER_MINUTE = 0;
+
+
+async function resolveMessage(jobType, profile, context) {
+  const result = pickMessage(jobType, profile, context);
+  if (!result) return null;
+  await supabase
+    .from('profiles')
+    .update({ last_message_index: buildIndexUpdate(profile, jobType, result.nextIndex) })
+    .eq('id', profile.id);
+  return result.text;
+}
 
 function getLagosTime() {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -229,14 +241,19 @@ async function dailyReminders(now) {
 
     eligible++;
 
-    await sendOnce(
-      'daily_reminder',
-      profile.id,
-      now.date,
-      '🔥 Time to post!',
-      `${profile.name || 'Creator'}, you haven't posted today. Don't break your streak!`,
-      { action: 'checkin' }
-    );
+    {
+      const msg = await resolveMessage('daily_reminder', profile, { streak: 0 });
+      if (msg) {
+        await sendOnce(
+          'daily_reminder',
+          profile.id,
+          now.date,
+          'Time to post',
+          msg,
+          { action: 'checkin' }
+        );
+      }
+    }
   }
 
   console.log(
@@ -273,14 +290,22 @@ async function eveningWarnings(now) {
       continue;
     }
 
-    await sendOnce(
-      'evening_warning',
-      streak.user_id,
-      now.date,
-      '⏰ Time is running out!',
-      `Your ${streak.current_streak}-day streak is at risk. Post something tonight to keep it alive.`,
-      { action: 'checkin' }
-    );
+    {
+      const { data: prof } = await supabase.from('profiles').select('id, name, last_message_index, use_emojis').eq('id', streak.user_id).single();
+      if (prof) {
+        const msg = await resolveMessage('evening_warning', prof, { streak: streak.current_streak });
+        if (msg) {
+          await sendOnce(
+            'evening_warning',
+            streak.user_id,
+            now.date,
+            'Time is running out',
+            msg,
+            { action: 'checkin' }
+          );
+        }
+      }
+    }
   }
 }
 
@@ -352,14 +377,22 @@ async function partnerAlerts(now) {
 
     if (error) throw error;
 
-    await sendOnce(
-      'partner_alert',
-      unpostedUserId,
-      now.date,
-      '👀 Your partner posted!',
-      `${postedProfile?.name || 'Your partner'} already posted today. Don't let them down!`,
-      { action: 'checkin' }
-    );
+    {
+      const { data: prof } = await supabase.from('profiles').select('id, name, last_message_index, use_emojis').eq('id', unpostedUserId).single();
+      if (prof) {
+        const msg = await resolveMessage('partner_alert', prof, { partner: postedProfile?.name });
+        if (msg) {
+          await sendOnce(
+            'partner_alert',
+            unpostedUserId,
+            now.date,
+            'Your partner posted',
+            msg,
+            { action: 'checkin' }
+          );
+        }
+      }
+    }
   }
 }
 
@@ -388,14 +421,22 @@ async function missedDayFollowups(now) {
       continue;
     }
 
-    await sendOnce(
-      'missed_day_followup',
-      streak.user_id,
-      now.date,
-      '💔 You missed today',
-      'It happens. Tomorrow is a fresh start. What got in the way today?',
-      { action: 'reflection' }
-    );
+    {
+      const { data: prof } = await supabase.from('profiles').select('id, name, last_message_index, use_emojis').eq('id', streak.user_id).single();
+      if (prof) {
+        const msg = await resolveMessage('missed_day_followup', prof, {});
+        if (msg) {
+          await sendOnce(
+            'missed_day_followup',
+            streak.user_id,
+            now.date,
+            'You missed today',
+            msg,
+            { action: 'reflection' }
+          );
+        }
+      }
+    }
   }
 }
 
@@ -446,14 +487,8 @@ async function weeklySummaries(now) {
     const done = tasks?.filter(task => task.completed).length || 0;
     const rate = total ? Math.round(done / total * 100) : 0;
 
-    const message =
-      `${done} posts this week · ${rate}% completion · ` +
-      `${streak?.current_streak || 0} day streak. ` +
-      (rate >= 80
-        ? 'Incredible week!'
-        : rate >= 50
-          ? 'Solid effort. Keep pushing.'
-          : 'New week, fresh start.');
+    const msg = await resolveMessage('weekly_summary', profile, { posts: done, rate, streak: streak?.current_streak || 0 });
+    const message = msg || `${done} posts this week. ${rate}% completion.`;
 
     await sendOnce(
       'weekly_summary',
