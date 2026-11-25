@@ -130,7 +130,7 @@ app.get('/api/notifications/unread', async (req, res) => {
       .select('*')
       .eq('user_id', user_id)
       .eq('read', false)
-      .order('created_at', { ascending: false });
+      .order('sent_at', { ascending: false });
 
     if (error) {
       return res.status(500).json({ error: error.message });
@@ -719,7 +719,7 @@ app.get('/api/notifications/list', async (req, res) => {
     if (!profile) return res.status(404).json({ error: 'profile not found' });
     const { data, error } = await supabase
       .from('notification_log')
-      .select('id, title, body, type, action, read_at, created_at, delivered')
+      .select('id, title, body, type, action, read_at, sent_at, delivered')
       .eq('user_id', profile.id)
       .order('created_at', { ascending: false })
       .limit(50);
