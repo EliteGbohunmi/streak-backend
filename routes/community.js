@@ -1,7 +1,7 @@
-const express = require('express');
+const express = require('express')
 const router = express.Router();
 const supabase = require('../supabase');
-const { notifyUser } = require('../notificationService');
+const { notifyUser, notifyInApp } = require('../notificationService');
 
 // GET all posts with comments
 router.get('/posts', async (req, res) => {
@@ -44,12 +44,15 @@ router.post('/posts', async (req, res) => {
       .select('id')
       .neq('id', user_id);
 
+    const { notifyInApp } = require('../notificationService');
     for (const u of allUsers || []) {
-      await notifyUser(
+      await notifyInApp(
         u.id,
         '📢 New community post',
         `${author?.name || 'Someone'} posted: ${content.substring(0, 60)}...`,
-        { action: 'community' }
+        'community',
+        'open_community',
+        { post_id: newPost.id }
       );
     }
 

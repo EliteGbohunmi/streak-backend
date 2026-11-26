@@ -194,9 +194,64 @@ async function logNotification(userId, type, delivered, title, error = null, bod
   });
 }
 
+
+async function notifyInApp(userId, title, body, type = 'system', action = null, metadata = {}) {
+  const { data, error } = await supabase.from('notification_log').insert({
+    user_id: userId,
+    title,
+    body,
+    type,
+    action,
+    delivered: true,
+    sent_at: new Date().toISOString(),
+    metadata
+  }).select().single();
+
+  if (error) {
+    console.error('notifyInApp insert failed:', error.message);
+    return null;
+  }
+  return data;
+}
+
+
+async function awardAchievement(userId, achievementKey) {
+  const { data: achievement } = await supabase
+    .from('achievements')
+    .select('id, name, description, icon, points')
+    .eq('key', achievementKey)
+    .single();
+
+  if (!achievement) return null;
+
+  const { error } = await supabase
+    .from('user_achievements')
+    .insert({ user_id: userId, achievement_id: achievement.id });
+
+  if (error) {
+    if (error.code === '23505') return null; // already unlocked
+    console.error('awardAchievement insert failed:', error.message);
+    return null;
+  }
+
+  await notifyInApp(
+    userId,
+    `🎖️ Achievement unlocked: ${achievement.name}`,
+    achievement.description || `You earned "${achievement.name}".`,
+    'achievement',
+    'view_achievement',
+    { achievement_key: achievementKey }
+  );
+
+  return achievement;
+}
+
 module.exports = {
+  notifyInApp,
+  awardAchievement,
   sendPush,
   sendEmail,
   notifyUser,
+  notifyInApp,
   getRandomNudgeMessage
 };

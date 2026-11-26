@@ -579,6 +579,130 @@ app.get('/api/partners/suggest', async (req, res) => {
   }
 });
 
+
+// ---- Partner request with notification ----
+app.post('/api/partners/request', async (req, res) => {
+  const { sender_id, receiver_id } = req.body;
+  if (!sender_id || !receiver_id) {
+    return res.status(400).json({ error: 'sender_id and receiver_id required' });
+  }
+  try {
+    const { data: sender } = await supabase
+      .from('profiles')
+      .select('name')
+      .eq('id', sender_id)
+      .single();
+
+    const { error } = await supabase.from('partner_requests').insert({
+      sender_id,
+      receiver_id,
+      status: 'pending'
+    });
+    if (error) return res.status(500).json({ error: error.message });
+
+    const { notifyInApp } = require('./notificationService');
+    await notifyInApp(
+      receiver_id,
+      '🤝 New partner request',
+      `${sender?.name || 'Someone'} wants to be your accountability partner.`,
+      'partner',
+      'partner_request',
+      { sender_id }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Partner request error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ---- Check-in: update streak + award achievements + notify ----
+app.post('/api/streaks/checkin', async (req, res) => {
+  const { user_id } = req.body;
+  if (!user_id) return res.status(400).json({ error: 'user_id required' });
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    const { data: existing } = await supabase
+      .from('streaks')
+      .select('current_streak, best_streak, last_checked_in, user_id')
+      .eq('user_id', user_id)
+      .maybeSingle();
+
+    if (existing?.last_checked_in === today) {
+      return res.json({ success: true, alreadyCheckedIn: true, streak: existing });
+    }
+
+    const newStreak = (existing?.current_streak || 0) + 1;
+    const newBest = Math.max(newStreak, existing?.best_streak || 0);
+
+    const { data: updated, error } = await supabase
+      .from('streaks')
+      .upsert({
+        user_id,
+        current_streak: newStreak,
+        best_streak: newBest,
+        last_checked_in: today
+      }, { onConflict: 'user_id' })
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Award achievements
+    const { awardAchievement } = require('./notificationService');
+
+    const { count: totalCheckins } = await supabase
+      .from('streaks')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user_id);
+
+    if (totalCheckins === 1) await awardAchievement(user_id, 'first_post');
+    if (newStreak >= 7) await awardAchievement(user_id, 'streak_7');
+    if (newStreak >= 30) await awardAchievement(user_id, 'streak_30');
+    if (newStreak >= 100) await awardAchievement(user_id, 'streak_100');
+
+    res.json({ success: true, streak: updated, newStreak });
+  } catch (err) {
+    console.error('Check-in error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ---- Award achievements for a check-in (idempotent, safe to call repeatedly) ----
+app.post('/api/streaks/award', async (req, res) => {
+  const { user_id, streak } = req.body;
+  if (!user_id) return res.status(400).json({ error: 'user_id required' });
+  try {
+    const { awardAchievement } = require('./notificationService');
+    const s = Number(streak) || 0;
+
+    const { count: totalCheckins } = await supabase
+      .from('notification_log')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user_id)
+      .eq('action', 'checkin');
+
+    const awarded = [];
+
+    if (totalCheckins !== null && totalCheckins <= 1) {
+      const a = await awardAchievement(user_id, 'first_post'); if (a) awarded.push(a.key);
+    }
+    if (s >= 7)   { const a = await awardAchievement(user_id, 'streak_7');   if (a) awarded.push(a.key); }
+    if (s >= 30)  { const a = await awardAchievement(user_id, 'streak_30');  if (a) awarded.push(a.key); }
+    if (s >= 100) { const a = await awardAchievement(user_id, 'streak_100'); if (a) awarded.push(a.key); }
+
+    res.json({ success: true, awarded });
+  } catch (err) {
+    console.error('Award error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---- Start server ----
 // CHANGED: fixed the broken `const server = app.post(...)` assignment.
 // `app.post` returns the Express app, not an HTTP server, so calling
