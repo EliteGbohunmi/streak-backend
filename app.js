@@ -731,101 +731,59 @@ app.get('/api/leaderboard', async (req, res) => {
   try {
     const window = (req.query.window || 'weekly').toLowerCase();
     const email = req.query.email;
-
-    // Week start: Monday 00:00 Africa/Lagos = Sunday 23:00 UTC
     const now = new Date();
-    const day = now.getUTCDay(); // 0=Sun..6=Sat
+    const day = now.getUTCDay();
     const daysSinceMonday = (day + 6) % 7;
     const weekStart = new Date(Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate() - daysSinceMonday,
-      23, 0, 0
+      now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - daysSinceMonday, 23, 0, 0
     ));
     const weekStartIso = weekStart.toISOString();
 
     let scores = {};
-
     if (window === 'weekly') {
       const { data, error } = await supabase
-        .from('score_history')
-        .select('user_id, points, created_at')
+        .from('score_history').select('user_id, points, created_at')
         .gte('created_at', weekStartIso);
       if (error) return res.status(500).json({ error: error.message });
-      for (const r of data || []) {
-        scores[r.user_id] = (scores[r.user_id] || 0) + (r.points || 0);
-      }
+      for (const r of data || []) scores[r.user_id] = (scores[r.user_id] || 0) + (r.points || 0);
     }
 
-    // Fetch all profiles with score > 0 (all-time) or all with weekly scores
-    let profileQuery = supabase
-      .from('profiles')
-      .select('id, name, email, avatar_url, creator_score');
-    if (window === 'all-time') {
-      profileQuery = profileQuery.gt('creator_score', 0);
-    }
+    let profileQuery = supabase.from('profiles').select('id, name, email, avatar_url, creator_score');
+    if (window === 'all-time') profileQuery = profileQuery.gt('creator_score', 0);
     const { data: profiles, error: pErr } = await profileQuery;
     if (pErr) return res.status(500).json({ error: pErr.message });
 
-    // Fetch streaks for these users
-    const { data: streaks } = await supabase
-      .from('streaks')
-      .select('user_id, current_streak, best_streak');
-
+    const { data: streaks } = await supabase.from('streaks').select('user_id, current_streak, best_streak');
     const streakMap = {};
-    for (const s of streaks || []) {
-      streakMap[s.user_id] = s;
-    }
+    for (const s of streaks || []) streakMap[s.user_id] = s;
 
     let rows = (profiles || []).map(p => {
       const s = streakMap[p.id] || {};
       const score = window === 'weekly' ? (scores[p.id] || 0) : (p.creator_score || 0);
       return {
-        id: p.id,
-        name: p.name,
-        email: p.email,
-        avatar_url: p.avatar_url,
-        score,
-        lifetime_score: p.creator_score || 0,
-        current_streak: s.current_streak || 0,
-        best_streak: s.best_streak || 0,
+        id: p.id, name: p.name, email: p.email, avatar_url: p.avatar_url,
+        score, lifetime_score: p.creator_score || 0,
+        current_streak: s.current_streak || 0, best_streak: s.best_streak || 0,
       };
     });
 
-    // Weekly: only include users with > 0 score this week
-    if (window === 'weekly') {
-      rows = rows.filter(r => r.score > 0);
-    }
-
+    if (window === 'weekly') rows = rows.filter(r => r.score > 0);
     rows.sort((a, b) => b.score - a.score);
     rows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
-
-    // Calculate gap to next rank for each entry
     for (let i = 0; i < rows.length; i++) {
-      if (i === 0) {
-        rows[i].gap_to_next = null;
-      } else {
-        rows[i].gap_to_next = rows[i - 1].score - rows[i].score;
-      }
+      rows[i].gap_to_next = i === 0 ? null : rows[i - 1].score - rows[i].score;
     }
 
     const entries = rows.slice(0, 20);
-    let you = null;
-    if (email) {
-      you = rows.find(r => r.email === email) || null;
-    }
+    const you = email ? (rows.find(r => r.email === email) || null) : null;
 
-    res.json({
-      window,
-      weekStart: window === 'weekly' ? weekStartIso : null,
-      entries,
-      you
-    });
+    res.json({ window, weekStart: window === 'weekly' ? weekStartIso : null, entries, you });
   } catch (err) {
     console.error('Leaderboard error:', err);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 
 // ---- Start server ----
