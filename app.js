@@ -95,19 +95,6 @@ app.post('/api/notifications/nudge', async (req, res) => {
     }
 
     // Dedupe: if the same user was nudged in the last 30 seconds, skip.
-    // Stops frontend burst (multi-tap / motion re-render) from spamming rows.
-    const thirtySecondsAgo = new Date(Date.now() - 30_000).toISOString();
-    const { data: recent } = await supabase
-      .from('notification_log')
-      .select('id')
-      .eq('user_id', to_user_id)
-      .eq('title', pushTitle)
-      .gte('sent_at', thirtySecondsAgo)
-      .limit(1);
-
-    if (recent && recent.length > 0) {
-      return res.json({ success: true, message: 'Nudge already sent recently' });
-    }
 
     // CHANGED: removed the manual user_notifications.insert below this call.
     // notifyUser handles logging to notification_log, which is what the
