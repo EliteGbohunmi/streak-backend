@@ -51,7 +51,14 @@ async function sendPush(userId, title, body, data = {}) {
     title: title,
     body: body,
     icon: '/app-icon.png',
-    image: data.image || '/notification-banner.svg',
+    image: data.image || ({
+      nudge: 'https://creator-accountability.vercel.app/banners/nudge.svg',
+      achievement: 'https://creator-accountability.vercel.app/banners/achievement.svg',
+      challenge: 'https://creator-accountability.vercel.app/banners/challenge.svg',
+      partner: 'https://creator-accountability.vercel.app/banners/partner.svg',
+      community: 'https://creator-accountability.vercel.app/banners/community.svg',
+      reminder: 'https://creator-accountability.vercel.app/banners/reminder.svg',
+    }[(data.type || '').toLowerCase()] || '/notification-banner.svg'),
     badge: '/badge-icon.svg',
     vibrate: [200, 100, 200],
     actions: data.actions || (
@@ -213,7 +220,7 @@ async function notifyInApp(userId, title, body, type = 'system', action = null, 
   }
 
   if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-    sendPush(userId, title, body, { action, ...(metadata || {}) }).catch(err => {
+    sendPush(userId, title, body, { action, type, ...(metadata || {}) }).catch(err => {
       console.error('notifyInApp push failed:', err.message);
     });
   }

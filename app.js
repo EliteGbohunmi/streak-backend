@@ -116,7 +116,7 @@ app.post('/api/notifications/nudge', async (req, res) => {
       to_user_id,
       pushTitle,
       nudgeMessage,
-      { action: 'checkin' }
+      { action: 'checkin', type: 'nudge' }
     );
 
     if (fromProfile.email) {
