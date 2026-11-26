@@ -41,6 +41,9 @@ app.use('/api/community', require('./routes/community'));
 app.use('/api/ai', require('./routes/ai'));
 
 // ---- Nudge ----
+// CHANGED: removed the duplicate `user_notifications.insert`. notifyUser
+// is now the single write path. It writes to notification_log (which
+// /api/notifications/list and the bell read). No more double rows.
 app.post('/api/notifications/nudge', async (req, res) => {
   const { from_user_id, to_user_id } = req.body;
 
@@ -78,18 +81,15 @@ app.post('/api/notifications/nudge', async (req, res) => {
 
     const pushTitle = '👋 You got nudged!';
 
+    // CHANGED: removed the manual user_notifications.insert below this call.
+    // notifyUser handles logging to notification_log, which is what the
+    // bell + /notifications page read from.
     await notifyUser(
       to_user_id,
       pushTitle,
       nudgeMessage,
       { action: 'checkin' }
     );
-
-    await supabase.from('user_notifications').insert({
-      user_id: to_user_id,
-      message: nudgeMessage,
-      from_user_id: from_user_id
-    });
 
     if (fromProfile.email) {
       const html = `
@@ -280,8 +280,6 @@ app.post('/test-send-email', async (req, res) => {
 });
 
 // ---- Broadcast helpers ----
-
-// Escape text before placing it inside HTML.
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -291,7 +289,6 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-// Convert plain-text line breaks into HTML while escaping user-provided text.
 function formatPlainTextMessage(value) {
   return escapeHtml(value)
     .replace(/\r\n/g, '\n')
@@ -299,17 +296,11 @@ function formatPlainTextMessage(value) {
     .replace(/\n/g, '<br>');
 }
 
-// Build the broadcast email.
-// By default, the message is treated as plain text.
-// To send formatted HTML, include allowHtml: true in the request body
-// and provide trusted HTML in message.
 function buildBroadcastEmail(subject, message, allowHtml = false) {
   const safeSubject = escapeHtml(subject);
-
   const messageContent = allowHtml
     ? message
     : formatPlainTextMessage(message);
-
   const year = new Date().getFullYear();
 
   return `
@@ -325,13 +316,10 @@ function buildBroadcastEmail(subject, message, allowHtml = false) {
   <div style="display:none;font-size:1px;color:#f4f5f7;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
     An update from Creator Accountability.
   </div>
-
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f4f5f7;width:100%;">
     <tr>
       <td align="center" style="padding:32px 12px;">
-
         <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;background-color:#ffffff;border-radius:14px;overflow:hidden;">
-
           <tr>
             <td style="padding:28px 32px 24px;border-bottom:1px solid #eeeeee;">
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
@@ -344,25 +332,21 @@ function buildBroadcastEmail(subject, message, allowHtml = false) {
               </table>
             </td>
           </tr>
-
           <tr>
             <td style="padding:36px 32px 12px;">
               <p style="margin:0 0 14px;font-size:11px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;color:#a66b00;">
                 A MESSAGE FROM OUR TEAM
               </p>
-
               <h1 style="margin:0;font-size:29px;line-height:1.3;letter-spacing:-0.7px;font-weight:700;color:#202124;overflow-wrap:break-word;">
                 ${safeSubject}
               </h1>
             </td>
           </tr>
-
           <tr>
             <td style="padding:12px 32px 30px;">
               <div style="font-size:16px;line-height:1.85;color:#454950;overflow-wrap:break-word;word-wrap:break-word;">
                 ${messageContent}
               </div>
-
               <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:30px;">
                 <tr>
                   <td align="center" bgcolor="#F5A623" style="border-radius:8px;">
@@ -373,32 +357,26 @@ function buildBroadcastEmail(subject, message, allowHtml = false) {
                   </td>
                 </tr>
               </table>
-
               <p style="margin:28px 0 0;font-size:14px;line-height:1.7;color:#737780;">
                 Keep showing up for the things you said matter. Small, consistent steps count.
               </p>
             </td>
           </tr>
-
           <tr>
             <td style="padding:24px 32px;background-color:#fafafa;border-top:1px solid #eeeeee;">
               <p style="margin:0 0 8px;font-size:13px;font-weight:bold;color:#454950;">
                 Creator Accountability
               </p>
-
               <p style="margin:0;font-size:12px;line-height:1.7;color:#858992;">
                 You're receiving this message because you have an account with Creator Accountability.
                 If you no longer wish to receive these updates, please contact the team.
               </p>
-
               <p style="margin:16px 0 0;font-size:11px;color:#a0a3aa;">
                 &copy; ${year} Creator Accountability
               </p>
             </td>
           </tr>
-
         </table>
-
       </td>
     </tr>
   </table>
@@ -421,27 +399,19 @@ app.post('/api/admin/broadcast', async (req, res) => {
     typeof message !== 'string' ||
     !message.trim()
   ) {
-    return res.status(400).json({
-      error: 'Subject and message are required.'
-    });
+    return res.status(400).json({ error: 'Subject and message are required.' });
   }
 
   if (subject.length > 200) {
-    return res.status(400).json({
-      error: 'Subject must be 200 characters or fewer.'
-    });
+    return res.status(400).json({ error: 'Subject must be 200 characters or fewer.' });
   }
 
   if (message.length > 30000) {
-    return res.status(400).json({
-      error: 'Message is too long. Maximum length is 30000 characters.'
-    });
+    return res.status(400).json({ error: 'Message is too long. Maximum length is 30000 characters.' });
   }
 
   if (typeof allowHtml !== 'boolean') {
-    return res.status(400).json({
-      error: 'allowHtml must be true or false.'
-    });
+    return res.status(400).json({ error: 'allowHtml must be true or false.' });
   }
 
   try {
@@ -450,11 +420,8 @@ app.post('/api/admin/broadcast', async (req, res) => {
       .select('email')
       .not('email', 'is', null);
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
 
-    // Remove blank and duplicate email addresses.
     const recipients = [
       ...new Set(
         (profiles || [])
@@ -473,67 +440,39 @@ app.post('/api/admin/broadcast', async (req, res) => {
       });
     }
 
-    const emailHtml = buildBroadcastEmail(
-      subject.trim(),
-      message,
-      allowHtml
-    );
-
+    const emailHtml = buildBroadcastEmail(subject.trim(), message, allowHtml);
     let sent = 0;
     let failed = 0;
-
     const batchSize = 10;
 
     for (let i = 0; i < recipients.length; i += batchSize) {
       const batch = recipients.slice(i, i + batchSize);
-
       const results = await Promise.all(
         batch.map(async (email) => {
           try {
-            const result = await sendEmail(
-              email,
-              subject.trim(),
-              emailHtml
-            );
-
-            if (result) {
-              return { email, success: true };
-            }
-
+            const result = await sendEmail(email, subject.trim(), emailHtml);
+            if (result) return { email, success: true };
             console.error(`Email service reported failure for ${email}`);
-
             return { email, success: false };
           } catch (err) {
-            console.error(
-              `Failed to send broadcast to ${email}:`,
-              err.message
-            );
-
+            console.error(`Failed to send broadcast to ${email}:`, err.message);
             return { email, success: false };
           }
         })
       );
 
       for (const result of results) {
-        if (result.success) {
-          sent++;
-        } else {
-          failed++;
-        }
+        if (result.success) sent++; else failed++;
       }
 
-      console.log(
-        `📧 Broadcast progress: ${sent + failed}/${recipients.length} processed`
-      );
+      console.log(`📧 Broadcast progress: ${sent + failed}/${recipients.length} processed`);
 
       if (i + batchSize < recipients.length) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
-    console.log(
-      `📬 Broadcast completed. Total: ${recipients.length}, Sent: ${sent}, Failed: ${failed}`
-    );
+    console.log(`📬 Broadcast completed. Total: ${recipients.length}, Sent: ${sent}, Failed: ${failed}`);
 
     return res.json({
       success: failed === 0,
@@ -544,7 +483,6 @@ app.post('/api/admin/broadcast', async (req, res) => {
     });
   } catch (err) {
     console.error('Broadcast error:', err);
-
     res.status(500).json({
       error: 'The broadcast could not be completed.',
       details: err.message
@@ -558,12 +496,9 @@ app.post('/api/admin/broadcast', async (req, res) => {
 app.get('/api/partners/suggest', async (req, res) => {
   const { userId } = req.query;
 
-  if (!userId) {
-    return res.status(400).json({ error: 'Missing userId' });
-  }
+  if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
   try {
-    // 1. Get all existing partner IDs in both directions.
     const { data: partners, error: pErr } = await supabase
       .from('accountability_partners')
       .select('user1_id, user2_id')
@@ -572,15 +507,12 @@ app.get('/api/partners/suggest', async (req, res) => {
     if (pErr) throw pErr;
 
     const excludedIds = new Set();
-
     partners?.forEach(partner => {
       excludedIds.add(partner.user1_id);
       excludedIds.add(partner.user2_id);
     });
-
     excludedIds.delete(userId);
 
-    // 2. Get pending requests sent or received by this user.
     const { data: requests, error: rErr } = await supabase
       .from('partner_requests')
       .select('sender_id, receiver_id')
@@ -588,16 +520,13 @@ app.get('/api/partners/suggest', async (req, res) => {
       .eq('status', 'pending');
 
     if (rErr) throw rErr;
-
     requests?.forEach(request => {
       excludedIds.add(request.sender_id);
       excludedIds.add(request.receiver_id);
     });
 
-    // 3. Find active users who are not already connected.
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
     const cutoff = sevenDaysAgo.toISOString().split('T')[0];
 
     let query = supabase
@@ -608,38 +537,32 @@ app.get('/api/partners/suggest', async (req, res) => {
       .limit(10);
 
     const excludedList = [...excludedIds];
-
     if (excludedList.length > 0) {
-      query = query.not(
-        'id',
-        'in',
-        `(${excludedList.join(',')})`
-      );
+      query = query.not('id', 'in', `(${excludedList.join(',')})`);
     }
 
     const { data: activeUsers, error: aErr } = await query;
-
     if (aErr) throw aErr;
 
     res.json(activeUsers || []);
   } catch (err) {
     console.error('Suggest partners error:', err);
-
     res.status(500).json({ error: err.message });
   }
 });
 
 // ---- Start server ----
+// CHANGED: fixed the broken `const server = app.post(...)` assignment.
+// `app.post` returns the Express app, not an HTTP server, so calling
+// `server.close()` later was wrong. Declare `server` properly.
 const PORT = process.env.PORT || 4000;
 
-const server = 
 app.post('/api/push/subscribe', async (req, res) => {
   try {
     const { userId, subscription } = req.body;
     if (!userId || !subscription?.endpoint || !subscription?.keys) {
       return res.status(400).json({ error: 'Missing userId or subscription' });
     }
-    const supabase = require('./supabase');
     const { error } = await supabase
       .from('push_subscriptions')
       .upsert(
@@ -662,12 +585,10 @@ app.post('/api/push/subscribe', async (req, res) => {
   }
 });
 
-
 app.post('/api/test-push', async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'email required' });
-    const supabase = require('./supabase');
     const { notifyUser } = require('./notificationService');
     const { data: profile, error } = await supabase
       .from('profiles')
@@ -687,12 +608,10 @@ app.post('/api/test-push', async (req, res) => {
   }
 });
 
-
 app.post('/api/proof/accept', async (req, res) => {
   try {
     const { proofId, partnerEmail } = req.body;
     if (!proofId || !partnerEmail) return res.status(400).json({ error: 'proofId and partnerEmail required' });
-    const supabase = require('./supabase');
     const { data: partner } = await supabase.from('profiles').select('id').eq('email', partnerEmail).single();
     if (!partner) return res.status(404).json({ error: 'partner not found' });
     const { data: updated, error } = await supabase
@@ -709,12 +628,10 @@ app.post('/api/proof/accept', async (req, res) => {
   }
 });
 
-
 app.get('/api/notifications/list', async (req, res) => {
   try {
     const { email } = req.query;
     if (!email) return res.status(400).json({ error: 'email required' });
-    const supabase = require('./supabase');
     const { data: profile, error: pErr } = await supabase
       .from('profiles')
       .select('id')
@@ -746,7 +663,6 @@ app.post('/api/notifications/read', async (req, res) => {
   try {
     const { id } = req.body;
     if (!id) return res.status(400).json({ error: 'id required' });
-    const supabase = require('./supabase');
     await supabase.from('notification_log').update({ read_at: new Date().toISOString() }).eq('id', id);
     res.json({ success: true });
   } catch (err) {
@@ -758,7 +674,6 @@ app.post('/api/notifications/read-all', async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'email required' });
-    const supabase = require('./supabase');
     const { data: profile } = await supabase.from('profiles').select('id').eq('email', email).single();
     if (!profile) return res.status(404).json({ error: 'profile not found' });
     await supabase.from('notification_log').update({ read_at: new Date().toISOString() }).eq('user_id', profile.id).is('read_at', null);
@@ -767,7 +682,6 @@ app.post('/api/notifications/read-all', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 app.post('/api/notifications/broadcast', async (req, res) => {
   try {
@@ -778,7 +692,6 @@ app.post('/api/notifications/broadcast', async (req, res) => {
     if (!title || !body) {
       return res.status(400).json({ error: 'title and body required' });
     }
-    const supabase = require('./supabase');
     const { notifyUser } = require('./notificationService');
 
     const { data: profiles, error } = await supabase
@@ -803,11 +716,12 @@ app.post('/api/notifications/broadcast', async (req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend running on port ${PORT} (0.0.0.0)`);
 
   try {
-    if (process.env.ENABLE_RENDER_SCHEDULER === 'true') startScheduler();
+    // CHANGED: hardcoded — scheduler always starts. No env var needed.
+    startScheduler();
   } catch (err) {
     console.error('Scheduler startup error:', err);
   }
@@ -819,9 +733,7 @@ const keepAliveInterval = setInterval(() => {
 
 process.on('SIGTERM', () => {
   console.log('⚠️ SIGTERM received – shutting down gracefully');
-
   clearInterval(keepAliveInterval);
-
   server.close(() => {
     console.log('✅ Server closed');
     process.exit(0);
@@ -830,9 +742,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('⚠️ SIGINT received – shutting down');
-
   clearInterval(keepAliveInterval);
-
   server.close(() => {
     process.exit(0);
   });
