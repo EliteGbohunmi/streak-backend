@@ -725,6 +725,104 @@ app.post('/api/notifications/in-app', async (req, res) => {
   }
 });
 
+
+// ---- Leaderboard (weekly or all-time) ----
+app.get('/api/leaderboard', async (req, res) => {
+  try {
+    const window = (req.query.window || 'weekly').toLowerCase();
+    const email = req.query.email; // optional: to include "your rank"
+
+    // Compute week start (Monday 00:00 Lagos = Sunday 23:00 UTC)
+    const now = new Date();
+    const day = now.getUTCDay(); // 0=Sun..6=Sat
+    const daysSinceMonday = (day + 6) % 7;
+    const weekStart = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() - daysSinceMonday,
+      23, 0, 0 // Sunday 23:00 UTC = Monday 00:00 Lagos
+    ));
+    const weekStartIso = weekStart.toISOString();
+
+    let rows;
+
+    if (window === 'weekly') {
+      // Sum score_history points in the last 7 days
+      const { data, error } = await supabase
+        .from('score_history')
+        .select('user_id, points, created_at')
+        .gte('created_at', weekStartIso);
+      if (error) return res.status(500).json({ error: error.message });
+
+      const totals = {};
+      for (const r of data || []) {
+        if (!totals[r.user_id]) totals[r.user_id] = 0;
+        totals[r.user_id] += r.points || 0;
+      }
+
+      const userIds = Object.keys(totals);
+      if (userIds.length === 0) return res.json({ window, weekStart: weekStartIso, entries: [], you: null });
+
+      const { data: profiles, error: pErr } = await supabase
+        .from('profiles')
+        .select('id, name, email, avatar_url, creator_score')
+        .in('id', userIds);
+      if (pErr) return res.status(500).json({ error: pErr.message });
+
+      rows = (profiles || [])
+        .map(p => ({
+          id: p.id,
+          name: p.name,
+          email: p.email,
+          avatar_url: p.avatar_url,
+          lifetime_score: p.creator_score || 0,
+          score: totals[p.id] || 0
+        }))
+        .sort((a, b) => b.score - a.score);
+    } else {
+      // All-time: sort by profiles.creator_score
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, name, email, avatar_url, creator_score')
+        .gt('creator_score', 0)
+        .order('creator_score', { ascending: false })
+        .limit(200);
+      if (error) return res.status(500).json({ error: error.message });
+
+      rows = (data || []).map(p => ({
+        id: p.id,
+        name: p.name,
+        email: p.email,
+        avatar_url: p.avatar_url,
+        lifetime_score: p.creator_score || 0,
+        score: p.creator_score || 0
+      }));
+    }
+
+    // Attach rank
+    rows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
+
+    // Top 20
+    const entries = rows.slice(0, 20);
+
+    // Find "you" if email provided
+    let you = null;
+    if (email) {
+      you = rows.find(r => r.email === email) || null;
+    }
+
+    res.json({
+      window,
+      weekStart: window === 'weekly' ? weekStartIso : null,
+      entries,
+      you
+    });
+  } catch (err) {
+    console.error('Leaderboard error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---- Start server ----
 // CHANGED: fixed the broken `const server = app.post(...)` assignment.
 // `app.post` returns the Express app, not an HTTP server, so calling
