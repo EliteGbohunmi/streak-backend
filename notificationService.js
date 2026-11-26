@@ -211,6 +211,13 @@ async function notifyInApp(userId, title, body, type = 'system', action = null, 
     console.error('notifyInApp insert failed:', error.message);
     return null;
   }
+
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    sendPush(userId, title, body, { action, ...(metadata || {}) }).catch(err => {
+      console.error('notifyInApp push failed:', err.message);
+    });
+  }
+
   return data;
 }
 
