@@ -703,6 +703,41 @@ app.post('/api/streaks/award', async (req, res) => {
   }
 });
 
+
+// ---- Generic in-app notification (for achievements, challenges, etc.) ----
+app.post('/api/notifications/in-app', async (req, res) => {
+  const { user_id, title, body, type, action, metadata, broadcast } = req.body;
+  if (!title || !body) {
+    return res.status(400).json({ error: 'title and body required' });
+  }
+  try {
+    const { notifyInApp } = require('./notificationService');
+
+    // broadcast: true → notify all users except `user_id`
+    if (broadcast) {
+      const { data: users } = await supabase
+        .from('profiles')
+        .select('id')
+        .neq('id', user_id || '00000000-0000-0000-0000-000000000000');
+      let sent = 0;
+      for (const u of users || []) {
+        const r = await notifyInApp(u.id, title, body, type || 'system', action || null, metadata || {});
+        if (r) sent++;
+      }
+      return res.json({ success: true, broadcast: true, sent });
+    }
+
+    // single user
+    if (!user_id) return res.status(400).json({ error: 'user_id required' });
+    const result = await notifyInApp(user_id, title, body, type || 'system', action || null, metadata || {});
+    if (!result) return res.status(500).json({ error: 'insert failed' });
+    res.json({ success: true, notification: result });
+  } catch (err) {
+    console.error('in-app notify error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---- Start server ----
 // CHANGED: fixed the broken `const server = app.post(...)` assignment.
 // `app.post` returns the Express app, not an HTTP server, so calling
