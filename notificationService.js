@@ -1,15 +1,30 @@
 const webpush = require('web-push');
 const supabase = require('./supabase');
 
+// ==========================================
+// VAPID CONFIGURATION
+// ==========================================
+
+let vapidReady = false;
+
 try {
-  webpush.setVapidDetails(
-    `mailto:${process.env.VAPID_EMAIL || 'admin@example.com'}`,
-    process.env.VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY
-  );
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    webpush.setVapidDetails(
+      `mailto:${process.env.VAPID_EMAIL || 'admin@example.com'}`,
+      process.env.VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    );
+
+    vapidReady = true;
+    console.log('[PUSH] VAPID configured.');
+  }
 } catch (err) {
-  console.warn('VAPID setup failed (push disabled):', err.message);
+  console.error('[PUSH] VAPID setup failed:', err.message);
 }
+
+// ==========================================
+// NUDGE MESSAGES
+// ==========================================
 
 const NUDGE_MESSAGES = [
   "Hey {to}, {from} is checking on you. Have you posted today? Don't break your streak.",
@@ -35,21 +50,82 @@ const NUDGE_MESSAGES = [
 ];
 
 function getRandomNudgeMessage(fromName, toName) {
-  const raw = NUDGE_MESSAGES[Math.floor(Math.random() * NUDGE_MESSAGES.length)];
-  return raw.replace(/{from}/g, fromName).replace(/{to}/g, toName);
+  const raw = NUDGE_MESSAGES[
+    Math.floor(Math.random() * NUDGE_MESSAGES.length)
+  ];
+
+  return raw
+    .replace(/{from}/g, fromName)
+    .replace(/{to}/g, toName);
 }
 
-async function sendPush(userId, title, body, data = {}) {
-  const { data: subs } = await supabase
+// ==========================================
+// NOTIFICATION LOGGING
+// ==========================================
+
+async function logNotification(
+  userId,
+  type,
+  delivered,
+  title,
+  error = null,
+  body = null,
+  action = null
+) {
+  const { error: dbError } = await supabase
+    .from('notification_log')
+    .insert({
+      user_id: userId,
+      type,
+      delivered,
+      error,
+      title: title || null,
+      body: body || null,
+      action: action || null,
+      metadata: { title }
+    });
+
+  if (dbError) {
+    console.error('[LOG] Insert failed:', dbError.message);
+  }
+}
+
+// ==========================================
+// PUSH NOTIFICATIONS
+// ==========================================
+
+async function sendPushDetailed(userId, title, body, data = {}) {
+  if (!vapidReady) {
+    return {
+      status: 'skipped',
+      error: 'VAPID is not configured'
+    };
+  }
+
+  const { data: subs, error } = await supabase
     .from('push_subscriptions')
     .select('*')
     .eq('user_id', userId);
 
-  if (!subs || subs.length === 0) return false;
+  if (error) {
+    return {
+      status: 'failed',
+      error: error.message
+    };
+  }
+
+  if (!subs || subs.length === 0) {
+    console.log(`[PUSH] No subscriptions for ${userId}`);
+
+    return {
+      status: 'skipped',
+      error: null
+    };
+  }
 
   const payload = JSON.stringify({
-    title: title,
-    body: body,
+    title,
+    body,
     icon: '/app-icon.png',
     image: data.image || ({
       nudge: 'https://creator-accountability.vercel.app/banners/nudge.svg',
@@ -57,7 +133,7 @@ async function sendPush(userId, title, body, data = {}) {
       challenge: 'https://creator-accountability.vercel.app/banners/challenge.svg',
       partner: 'https://creator-accountability.vercel.app/banners/partner.svg',
       community: 'https://creator-accountability.vercel.app/banners/community.svg',
-      reminder: 'https://creator-accountability.vercel.app/banners/reminder.svg',
+      reminder: 'https://creator-accountability.vercel.app/banners/reminder.svg'
     }[(data.type || '').toLowerCase()] || '/notification-banner.svg'),
     badge: '/badge-icon.svg',
     vibrate: [200, 100, 200],
@@ -72,44 +148,93 @@ async function sendPush(userId, title, body, data = {}) {
             { action: 'dismiss', title: 'Dismiss' }
           ]
     ),
-    data: data
+    data
   });
 
-  let success = false;
+  let successCount = 0;
+  const errors = [];
 
   for (const sub of subs) {
     try {
       await webpush.sendNotification(
         {
           endpoint: sub.endpoint,
-          keys: { p256dh: sub.p256dh, auth: sub.auth }
+          keys: {
+            p256dh: sub.p256dh,
+            auth: sub.auth
+          }
         },
         payload
       );
 
-      success = true;
-      await logNotification(userId, 'push', true, title, null, body, data && data.action ? data.action : null);
+      successCount++;
+
+      await supabase
+        .from('push_subscriptions')
+        .update({ last_success_at: new Date().toISOString() })
+        .eq('id', sub.id);
+
+      await logNotification(
+        userId,
+        'push',
+        true,
+        title,
+        null,
+        body,
+        data.action || null
+      );
     } catch (err) {
-      if (err.statusCode === 410) {
+      console.error('[PUSH] Failed:', err.message);
+      errors.push(err.message);
+
+      if (err.statusCode === 404 || err.statusCode === 410) {
         await supabase
           .from('push_subscriptions')
           .delete()
           .eq('endpoint', sub.endpoint);
       }
 
-      await logNotification(userId, 'push', false, title, err.message, body, data && data.action ? data.action : null);
+      await logNotification(
+        userId,
+        'push',
+        false,
+        title,
+        err.message,
+        body,
+        data.action || null
+      );
     }
   }
 
-  return success;
+  if (successCount > 0) {
+    return {
+      status: 'sent',
+      error: null
+    };
+  }
+
+  return {
+    status: 'failed',
+    error: errors.join('; ') || 'All push deliveries failed'
+  };
 }
+
+// Keep the original boolean-style function for other parts of the app.
+async function sendPush(userId, title, body, data = {}) {
+  const result = await sendPushDetailed(userId, title, body, data);
+  return result.status === 'sent';
+}
+
+// ==========================================
+// EMAIL NOTIFICATIONS
+// ==========================================
 
 async function sendEmail(to, subject, html) {
   const functionUrl = process.env.EMAIL_FUNCTION_URL;
   const functionSecret = process.env.EMAIL_FUNCTION_SECRET;
 
   if (!functionUrl || !functionSecret) {
-    console.error('Email function URL or secret is missing.');
+    console.error('[EMAIL] Function URL or secret is missing.');
     return false;
   }
 
@@ -128,123 +253,220 @@ async function sendEmail(to, subject, html) {
 
     if (!response.ok || !result.success) {
       console.error(
-        'Supabase email function failed:',
+        '[EMAIL] Failed:',
         response.status,
         result.error || 'Unknown error'
       );
       return false;
     }
 
-    console.log(`Email sent to ${to} through Supabase.`);
+    console.log(`[EMAIL] Sent to ${to}`);
     return true;
   } catch (err) {
-    console.error('Email request failed:', err.message);
+    console.error('[EMAIL] Request failed:', err.message);
     return false;
   }
 }
 
-async function notifyUser(userId, title, body, data = {}, options = {}) {
-  const { forceEmail = false } = options;
+// ==========================================
+// INDEPENDENT EMAIL + PUSH DELIVERY
+// ==========================================
 
-  const { data: profile } = await supabase
+async function notifyUser(userId, title, body, data = {}, options = {}) {
+  const requestedChannels = Array.isArray(options.channels)
+    ? options.channels
+    : ['email', 'push'];
+
+  const channels = [...new Set(requestedChannels)].filter(channel =>
+    channel === 'email' || channel === 'push'
+  );
+
+  const { data: profile, error } = await supabase
     .from('profiles')
     .select('name, email')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
-  if (!profile) return { success: false, reason: 'profile_not_found' };
-
-  let pushed = false;
-
-  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-    pushed = await sendPush(userId, title, body, data);
-  } else {
-    console.log('Push disabled - VAPID keys not set.');
+  if (error || !profile) {
+    return {
+      success: false,
+      reason: error?.message || 'profile_not_found',
+      emailStatus: 'not_attempted',
+      pushStatus: 'not_attempted',
+      emailSent: false,
+      pushed: false
+    };
   }
 
-  let emailSent = false;
+  let emailStatus = 'not_attempted';
+  let pushStatus = 'not_attempted';
+  let emailError = null;
+  let pushError = null;
 
-  if (forceEmail || !pushed) {
-    if (profile.email) {
-      const fallbackHtml = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-          <h2 style="color: #F5A623;">Streak</h2>
-          <p style="font-size: 16px;">${body}</p>
-          <div style="text-align: center; margin: 20px 0;">
-            <a href="https://creator-accountability.netlify.app/dashboard" style="background: #F5A623; color: #000; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">Open Dashboard</a>
+  const tasks = [];
+
+  if (channels.includes('email')) {
+    tasks.push((async () => {
+      if (!profile.email) {
+        emailStatus = 'skipped';
+        console.log(`[EMAIL] No email address for ${userId}`);
+        return;
+      }
+
+      const safeBody = String(body || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+      const html = `
+        <div style="font-family:Arial,sans-serif;max-width:600px;padding:20px;border:1px solid #e0e0e0;border-radius:8px;">
+          <h2 style="color:#F5A623;">Creator Accountability</h2>
+          <p style="font-size:16px;">${safeBody}</p>
+          <div style="text-align:center;margin:20px 0;">
+            <a href="https://creator-accountability.vercel.app/dashboard"
+               style="background:#F5A623;color:#000;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">
+              Open Dashboard
+            </a>
           </div>
-          <p style="font-size: 12px; color: #999; text-align: center;">You're receiving this because you're part of Creator Accountability.</p>
+          <p style="font-size:12px;color:#999;text-align:center;">
+            You're receiving this because you're part of Creator Accountability.
+          </p>
         </div>
       `;
 
-      emailSent = await sendEmail(profile.email, title, fallbackHtml);
-    }
+      try {
+        const sent = await sendEmail(profile.email, title, html);
+
+        emailStatus = sent ? 'sent' : 'failed';
+        emailError = sent ? null : 'Email delivery failed';
+
+        await logNotification(
+          userId,
+          'email',
+          sent,
+          title,
+          emailError,
+          body,
+          data.action || null
+        );
+      } catch (err) {
+        emailStatus = 'failed';
+        emailError = err.message || 'Email delivery failed';
+      }
+    })());
   }
 
+  if (channels.includes('push')) {
+    tasks.push((async () => {
+      try {
+        const result = await sendPushDetailed(
+          userId,
+          title,
+          body,
+          data
+        );
+
+        pushStatus = result.status;
+        pushError = result.error;
+      } catch (err) {
+        pushStatus = 'failed';
+        pushError = err.message || 'Push delivery failed';
+      }
+    })());
+  }
+
+  await Promise.allSettled(tasks);
+
+  const emailSent = emailStatus === 'sent';
+  const pushed = pushStatus === 'sent';
+
+  const success = emailSent || pushed;
+
+  console.log(
+    `[DELIVERY] ${userId} | Email: ${emailStatus} | Push: ${pushStatus}`
+  );
+
   return {
-    success: forceEmail ? emailSent : (pushed || emailSent),
+    success,
     emailSent,
-    pushed
+    pushed,
+    emailStatus,
+    pushStatus,
+    emailError,
+    pushError
   };
 }
 
-async function logNotification(userId, type, delivered, title, error = null, body = null, action = null) {
-  await supabase.from('notification_log').insert({
-    user_id: userId,
-    type,
-    delivered,
-    error,
-    title: title || null,
-    body: body || null,
-    action: action || null,
-    metadata: { title }
-  });
-}
+// ==========================================
+// IN-APP NOTIFICATIONS
+// ==========================================
 
-
-async function notifyInApp(userId, title, body, type = 'system', action = null, metadata = {}) {
-  const { data, error } = await supabase.from('notification_log').insert({
-    user_id: userId,
-    title,
-    body,
-    type,
-    action,
-    delivered: true,
-    sent_at: new Date().toISOString(),
-    metadata
-  }).select().single();
+async function notifyInApp(
+  userId,
+  title,
+  body,
+  type = 'system',
+  action = null,
+  metadata = {}
+) {
+  const { data, error } = await supabase
+    .from('notification_log')
+    .insert({
+      user_id: userId,
+      title,
+      body,
+      type,
+      action,
+      delivered: true,
+      sent_at: new Date().toISOString(),
+      metadata
+    })
+    .select()
+    .single();
 
   if (error) {
-    console.error('notifyInApp insert failed:', error.message);
+    console.error('[IN-APP] Insert failed:', error.message);
     return null;
   }
 
-  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-    sendPush(userId, title, body, { action, type, ...(metadata || {}) }).catch(err => {
-      console.error('notifyInApp push failed:', err.message);
+  if (vapidReady) {
+    sendPush(
+      userId,
+      title,
+      body,
+      { action, type, ...(metadata || {}) }
+    ).catch(err => {
+      console.error('[IN-APP] Push failed:', err.message);
     });
   }
 
   return data;
 }
 
+// ==========================================
+// ACHIEVEMENTS
+// ==========================================
 
 async function awardAchievement(userId, achievementKey) {
-  const { data: achievement } = await supabase
+  const { data: achievement, error } = await supabase
     .from('achievements')
     .select('id, name, description, icon, points')
     .eq('key', achievementKey)
     .single();
 
-  if (!achievement) return null;
+  if (error || !achievement) return null;
 
-  const { error } = await supabase
+  const { error: insertError } = await supabase
     .from('user_achievements')
-    .insert({ user_id: userId, achievement_id: achievement.id });
+    .insert({
+      user_id: userId,
+      achievement_id: achievement.id
+    });
 
-  if (error) {
-    if (error.code === '23505') return null; // already unlocked
-    console.error('awardAchievement insert failed:', error.message);
+  if (insertError) {
+    if (insertError.code === '23505') return null;
+
+    console.error('[ACHIEVEMENT] Insert failed:', insertError.message);
     return null;
   }
 
@@ -260,12 +482,15 @@ async function awardAchievement(userId, achievementKey) {
   return achievement;
 }
 
+// ==========================================
+// EXPORTS
+// ==========================================
+
 module.exports = {
   notifyInApp,
   awardAchievement,
   sendPush,
   sendEmail,
   notifyUser,
-  notifyInApp,
   getRandomNudgeMessage
 };

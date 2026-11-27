@@ -5,15 +5,23 @@ const { pickMessage, buildIndexUpdate } = require('./notificationTemplates');
 const TIME_ZONE = 'Africa/Lagos';
 const DEFAULT_REMINDER_HOUR = 8;
 const DEFAULT_REMINDER_MINUTE = 0;
-
+const PROCESSING_TIMEOUT_MINUTES = 30;
 
 async function resolveMessage(jobType, profile, context) {
   const result = pickMessage(jobType, profile, context);
   if (!result) return null;
+
   await supabase
     .from('profiles')
-    .update({ last_message_index: buildIndexUpdate(profile, jobType, result.nextIndex) })
+    .update({
+      last_message_index: buildIndexUpdate(
+        profile,
+        jobType,
+        result.nextIndex
+      )
+    })
     .eq('id', profile.id);
+
   return result.text;
 }
 
@@ -30,10 +38,7 @@ function getLagosTime() {
   }).formatToParts(new Date());
 
   const result = {};
-
-  for (const part of parts) {
-    result[part.type] = part.value;
-  }
+  for (const part of parts) result[part.type] = part.value;
 
   return {
     date: `${result.year}-${result.month}-${result.day}`,
@@ -54,111 +59,222 @@ function checkedInToday(value, today) {
   return String(value || '').slice(0, 10) === today;
 }
 
-async function claimNotification(jobKey, userId, today) {
-  const { error } = await supabase
-    .from('scheduled_notification_runs')
-    .insert({
-      job_key: jobKey,
-      recipient_id: String(userId),
-      scheduled_for: today,
-      status: 'processing'
-    });
-
-  if (error?.code === '23505') {
-    return false;
-  }
-
-  if (error) {
-    throw error;
-  }
-
-  return true;
-}
-
-async function sendOnce(jobKey, userId, today, title, body, data = {}) {
-  let claimed = false;
-
-  try {
-    claimed = await claimNotification(jobKey, userId, today);
-
-    if (!claimed) {
-      console.log(
-        `[SKIP] ${jobKey}: notification already recorded for user ${userId}`
-      );
-      return;
-    }
-
-    console.log(`[ATTEMPT] ${jobKey} for user ${userId}`);
-
-    const result = await notifyUser(
-      userId,
-      title,
-      body,
-      data,
-      {}
-    );
-
-    if (!result?.success) {
-      throw new Error(
-        `Notification delivery failed for user ${userId}. ` +
-        `Reason: ${result?.reason || 'delivery unsuccessful'}`
-      );
-    }
-
-    const { error } = await supabase
-      .from('scheduled_notification_runs')
-      .update({
-        status: 'sent',
-        updated_at: new Date().toISOString(),
-        error_message: null
-      })
-      .eq('job_key', jobKey)
-      .eq('recipient_id', String(userId))
-      .eq('scheduled_for', today);
-
-    if (error) {
-      console.error(
-        '[DB ERROR] Could not update notification status:',
-        error.message
-      );
-    }
-
-    console.log(
-      `[SENT] ${jobKey} to user ${userId}. ` +
-      `Email: ${result.emailSent ? 'success' : 'not confirmed'}; ` +
-      `Push: ${result.pushed ? 'success' : 'not confirmed'}`
-    );
-  } catch (error) {
-    console.error(`[FAILED] ${jobKey} for user ${userId}:`, error.message);
-
-    if (claimed) {
-      const { error: deleteError } = await supabase
-        .from('scheduled_notification_runs')
-        .delete()
-        .eq('job_key', jobKey)
-        .eq('recipient_id', String(userId))
-        .eq('scheduled_for', today);
-
-      if (deleteError) {
-        console.error(
-          '[DB ERROR] Could not release notification claim:',
-          deleteError.message
-        );
-      }
-    }
-  }
-}
-
 async function getRows(table, columns, configure = q => q) {
   const { data, error } = await configure(
     supabase.from(table).select(columns)
   );
 
-  if (error) {
-    throw error;
+  if (error) throw error;
+  return data || [];
+}
+
+function isTerminal(status) {
+  return status === 'sent' || status === 'skipped';
+}
+
+function minutesSince(value) {
+  if (!value) return Infinity;
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return Infinity;
+  return (Date.now() - timestamp) / 60000;
+}
+
+async function getOrCreateRun(jobKey, userId, today) {
+  const query = () => supabase
+    .from('scheduled_notification_runs')
+    .select('*')
+    .eq('job_key', jobKey)
+    .eq('recipient_id', String(userId))
+    .eq('scheduled_for', today)
+    .maybeSingle();
+
+  let { data: run, error } = await query();
+  if (error) throw error;
+
+  if (run) return run;
+
+  const { data: inserted, error: insertError } = await supabase
+    .from('scheduled_notification_runs')
+    .insert({
+      job_key: jobKey,
+      recipient_id: String(userId),
+      scheduled_for: today,
+      status: 'pending',
+      email_status: 'pending',
+      push_status: 'pending',
+      updated_at: new Date().toISOString()
+    })
+    .select('*')
+    .single();
+
+  if (!insertError) return inserted;
+
+  // Another runner may have created this record at the same time.
+  if (insertError.code === '23505') {
+    const existing = await query();
+    if (existing.error) throw existing.error;
+    if (existing.data) return existing.data;
   }
 
-  return data || [];
+  throw insertError;
+}
+
+async function sendOnce(jobKey, userId, today, title, body, data = {}) {
+  let run;
+
+  try {
+    run = await getOrCreateRun(jobKey, userId, today);
+
+    const emailStatus = run.email_status || 'pending';
+    const pushStatus = run.push_status || 'pending';
+
+    if (isTerminal(emailStatus) && isTerminal(pushStatus)) {
+      console.log(`[SKIP] ${jobKey}: both channels already processed for ${userId}`);
+      return;
+    }
+
+    if (
+      run.status === 'processing' &&
+      minutesSince(run.updated_at) < PROCESSING_TIMEOUT_MINUTES
+    ) {
+      console.log(`[SKIP] ${jobKey}: another runner may be processing ${userId}`);
+      return;
+    }
+
+    const channels = [];
+
+    if (!isTerminal(emailStatus)) channels.push('email');
+    if (!isTerminal(pushStatus)) channels.push('push');
+
+    if (!channels.length) return;
+
+    const startedAt = new Date().toISOString();
+
+    const { error: claimError } = await supabase
+      .from('scheduled_notification_runs')
+      .update({
+        status: 'processing',
+        updated_at: startedAt
+      })
+      .eq('id', run.id);
+
+    if (claimError) throw claimError;
+
+    console.log(
+      `[ATTEMPT] ${jobKey} for ${userId}. Channels: ${channels.join(', ')}`
+    );
+
+    let result;
+
+    try {
+      result = await notifyUser(
+        userId,
+        title,
+        body,
+        data,
+        { channels }
+      );
+    } catch (deliveryError) {
+      const message = deliveryError.message || 'Unknown delivery error';
+
+      const updates = {
+        status: 'failed',
+        updated_at: new Date().toISOString(),
+        error_message: message
+      };
+
+      if (channels.includes('email')) {
+        updates.email_status = 'failed';
+        updates.email_error = message;
+      }
+
+      if (channels.includes('push')) {
+        updates.push_status = 'failed';
+        updates.push_error = message;
+      }
+
+      const { error: updateError } = await supabase
+        .from('scheduled_notification_runs')
+        .update(updates)
+        .eq('id', run.id);
+
+      if (updateError) {
+        console.error('[DB ERROR] Could not save failed delivery:', updateError.message);
+      }
+
+      console.error(`[FAILED] ${jobKey} for ${userId}: ${message}`);
+      return;
+    }
+
+    // The notification service reports each channel independently.
+    const emailResult = result?.emailStatus ||
+      (result?.emailSent ? 'sent' : 'failed');
+
+    const pushResult = result?.pushStatus ||
+      (result?.pushed ? 'sent' : 'failed');
+
+    const updates = {
+      updated_at: new Date().toISOString()
+    };
+
+    if (channels.includes('email')) {
+      updates.email_status = emailResult;
+      updates.email_error = emailResult === 'failed'
+        ? (result?.emailError || 'Email delivery was unsuccessful')
+        : null;
+    }
+
+    if (channels.includes('push')) {
+      updates.push_status = pushResult;
+      updates.push_error = pushResult === 'failed'
+        ? (result?.pushError || 'Push delivery was unsuccessful')
+        : null;
+    }
+
+    const finalEmailStatus = channels.includes('email')
+      ? emailResult
+      : emailStatus;
+
+    const finalPushStatus = channels.includes('push')
+      ? pushResult
+      : pushStatus;
+
+    const allFinished =
+      isTerminal(finalEmailStatus) &&
+      isTerminal(finalPushStatus);
+
+    const anyFailed =
+      finalEmailStatus === 'failed' ||
+      finalPushStatus === 'failed';
+
+    updates.status = allFinished
+      ? 'sent'
+      : anyFailed
+        ? 'failed'
+        : 'processing';
+
+    updates.error_message = [
+      updates.email_error || run.email_error,
+      updates.push_error || run.push_error
+    ].filter(Boolean).join(' | ') || null;
+
+    const { error: updateError } = await supabase
+      .from('scheduled_notification_runs')
+      .update(updates)
+      .eq('id', run.id);
+
+    if (updateError) {
+      console.error('[DB ERROR] Could not save delivery results:', updateError.message);
+      return;
+    }
+
+    console.log(
+      `[RESULT] ${jobKey} for ${userId}: ` +
+      `Email=${finalEmailStatus}, Push=${finalPushStatus}`
+    );
+  } catch (error) {
+    console.error(`[FAILED] ${jobKey} for ${userId}:`, error.message);
+  }
 }
 
 async function dailyReminders(now) {
@@ -166,10 +282,9 @@ async function dailyReminders(now) {
 
   const profiles = await getRows(
     'profiles',
-    'id, name, email, reminder_hour, reminder_minute'
+    'id, name, email, reminder_hour, reminder_minute, last_message_index, use_emojis'
   );
 
-  let missingEmail = 0;
   let outsideWindow = 0;
   let alreadyCheckedIn = 0;
   let eligible = 0;
@@ -178,24 +293,17 @@ async function dailyReminders(now) {
   console.log(`[DAILY] Profiles found: ${profiles.length}`);
 
   for (const profile of profiles) {
-    if (!profile.email) {
-      missingEmail++;
-      continue;
-    }
-
     const usesDefault =
       profile.reminder_hour == null ||
       profile.reminder_minute == null;
 
-    const reminderHour =
-      profile.reminder_hour == null
-        ? DEFAULT_REMINDER_HOUR
-        : Number(profile.reminder_hour);
+    const reminderHour = profile.reminder_hour == null
+      ? DEFAULT_REMINDER_HOUR
+      : Number(profile.reminder_hour);
 
-    const reminderMinute =
-      profile.reminder_minute == null
-        ? DEFAULT_REMINDER_MINUTE
-        : Number(profile.reminder_minute);
+    const reminderMinute = profile.reminder_minute == null
+      ? DEFAULT_REMINDER_MINUTE
+      : Number(profile.reminder_minute);
 
     if (
       !Number.isInteger(reminderHour) ||
@@ -205,21 +313,18 @@ async function dailyReminders(now) {
       reminderMinute < 0 ||
       reminderMinute > 59
     ) {
-      console.error(
-        `[SKIP] Invalid reminder settings for user ${profile.id}`
-      );
+      console.error(`[SKIP] Invalid reminder settings for ${profile.id}`);
       continue;
     }
 
-    if (usesDefault) {
-      defaultedReminders++;
-    }
+    if (usesDefault) defaultedReminders++;
 
     const target = reminderHour * 60 + reminderMinute;
     const age = now.minutes - target;
 
-    // Allow a 25-minute delivery window for delayed workflow runs.
-    if (age < 0 || age > 25) {
+    // Catch up if the scheduled time has passed today.
+    // The database record prevents a second reminder that same day.
+    if (age < 0 || age >= 24 * 60) {
       outsideWindow++;
       continue;
     }
@@ -230,9 +335,7 @@ async function dailyReminders(now) {
       .eq('user_id', profile.id)
       .maybeSingle();
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
 
     if (checkedInToday(streak?.last_checked_in, now.date)) {
       alreadyCheckedIn++;
@@ -241,25 +344,27 @@ async function dailyReminders(now) {
 
     eligible++;
 
-    {
-      const msg = await resolveMessage('daily_reminder', profile, { streak: 0 });
-      if (msg) {
-        await sendOnce(
-          'daily_reminder',
-          profile.id,
-          now.date,
-          'Time to post',
-          msg,
-          { action: 'checkin' }
-        );
-      }
+    const msg = await resolveMessage(
+      'daily_reminder',
+      profile,
+      { streak: 0 }
+    );
+
+    if (msg) {
+      await sendOnce(
+        'daily_reminder',
+        profile.id,
+        now.date,
+        'Time to post',
+        msg,
+        { action: 'checkin' }
+      );
     }
   }
 
   console.log(
     `[DAILY SUMMARY] Eligible: ${eligible}; ` +
-    `outside reminder window: ${outsideWindow}; ` +
-    `missing email: ${missingEmail}; ` +
+    `not due yet: ${outsideWindow}; ` +
     `already checked in: ${alreadyCheckedIn}; ` +
     `using default 8:00 AM: ${defaultedReminders}`
   );
@@ -267,10 +372,7 @@ async function dailyReminders(now) {
 
 async function eveningWarnings(now) {
   if (now.hour !== 20) {
-    console.log(
-      `[SKIP] Evening warnings only run at 20:00 WAT. ` +
-      `Current hour: ${now.hour}.`
-    );
+    console.log(`[SKIP] Evening warnings run at 20:00 WAT. Current hour: ${now.hour}`);
     return;
   }
 
@@ -283,38 +385,39 @@ async function eveningWarnings(now) {
   console.log(`[EVENING] Active streaks found: ${streaks.length}`);
 
   for (const streak of streaks) {
-    if (checkedInToday(streak.last_checked_in, now.date)) {
-      console.log(
-        `[SKIP] Evening warning: user ${streak.user_id} already checked in.`
-      );
-      continue;
-    }
+    if (checkedInToday(streak.last_checked_in, now.date)) continue;
 
-    {
-      const { data: prof } = await supabase.from('profiles').select('id, name, last_message_index, use_emojis').eq('id', streak.user_id).single();
-      if (prof) {
-        const msg = await resolveMessage('evening_warning', prof, { streak: streak.current_streak });
-        if (msg) {
-          await sendOnce(
-            'evening_warning',
-            streak.user_id,
-            now.date,
-            'Time is running out',
-            msg,
-            { action: 'checkin' }
-          );
-        }
-      }
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('id, name, email, last_message_index, use_emojis')
+      .eq('id', streak.user_id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!profile) continue;
+
+    const msg = await resolveMessage(
+      'evening_warning',
+      profile,
+      { streak: streak.current_streak }
+    );
+
+    if (msg) {
+      await sendOnce(
+        'evening_warning',
+        streak.user_id,
+        now.date,
+        'Time is running out',
+        msg,
+        { action: 'checkin' }
+      );
     }
   }
 }
 
 async function partnerAlerts(now) {
   if (now.hour !== 9) {
-    console.log(
-      `[SKIP] Partner alerts only run during the 09:00 hour WAT. ` +
-      `Current hour: ${now.hour}.`
-    );
+    console.log(`[SKIP] Partner alerts run during the 09:00 hour WAT. Current hour: ${now.hour}`);
     return;
   }
 
@@ -343,65 +446,53 @@ async function partnerAlerts(now) {
     if (a.error) throw a.error;
     if (b.error) throw b.error;
 
-    const user1Posted = checkedInToday(
-      a.data?.last_checked_in,
-      now.date
-    );
+    const user1Posted = checkedInToday(a.data?.last_checked_in, now.date);
+    const user2Posted = checkedInToday(b.data?.last_checked_in, now.date);
 
-    const user2Posted = checkedInToday(
-      b.data?.last_checked_in,
-      now.date
-    );
+    if (user1Posted === user2Posted) continue;
 
-    if (user1Posted === user2Posted) {
-      console.log(
-        `[SKIP] Partner pair ${pair.user1_id}/${pair.user2_id}: ` +
-        'both posted or neither posted.'
-      );
-      continue;
-    }
+    const postedUserId = user1Posted ? pair.user1_id : pair.user2_id;
+    const unpostedUserId = user1Posted ? pair.user2_id : pair.user1_id;
 
-    const postedUserId = user1Posted
-      ? pair.user1_id
-      : pair.user2_id;
-
-    const unpostedUserId = user1Posted
-      ? pair.user2_id
-      : pair.user1_id;
-
-    const { data: postedProfile, error } = await supabase
+    const { data: postedProfile, error: postedError } = await supabase
       .from('profiles')
       .select('name')
       .eq('id', postedUserId)
       .maybeSingle();
 
-    if (error) throw error;
+    if (postedError) throw postedError;
 
-    {
-      const { data: prof } = await supabase.from('profiles').select('id, name, last_message_index, use_emojis').eq('id', unpostedUserId).single();
-      if (prof) {
-        const msg = await resolveMessage('partner_alert', prof, { partner: postedProfile?.name });
-        if (msg) {
-          await sendOnce(
-            'partner_alert',
-            unpostedUserId,
-            now.date,
-            'Your partner posted',
-            msg,
-            { action: 'checkin' }
-          );
-        }
-      }
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('id, name, email, last_message_index, use_emojis')
+      .eq('id', unpostedUserId)
+      .maybeSingle();
+
+    if (profileError) throw profileError;
+    if (!profile) continue;
+
+    const msg = await resolveMessage(
+      'partner_alert',
+      profile,
+      { partner: postedProfile?.name }
+    );
+
+    if (msg) {
+      await sendOnce(
+        'partner_alert',
+        unpostedUserId,
+        now.date,
+        'Your partner posted',
+        msg,
+        { action: 'checkin' }
+      );
     }
   }
 }
 
 async function missedDayFollowups(now) {
   if (now.hour !== 23) {
-    console.log(
-      `[SKIP] Missed-day follow-ups only run during the 23:00 hour WAT. ` +
-      `Current hour: ${now.hour}.`
-    );
+    console.log(`[SKIP] Missed-day follow-ups run during the 23:00 hour WAT. Current hour: ${now.hour}`);
     return;
   }
 
@@ -414,28 +505,32 @@ async function missedDayFollowups(now) {
   console.log(`[MISSED DAY] Streaks over two days found: ${streaks.length}`);
 
   for (const streak of streaks) {
-    if (checkedInToday(streak.last_checked_in, now.date)) {
-      console.log(
-        `[SKIP] Missed-day follow-up: user ${streak.user_id} checked in today.`
-      );
-      continue;
-    }
+    if (checkedInToday(streak.last_checked_in, now.date)) continue;
 
-    {
-      const { data: prof } = await supabase.from('profiles').select('id, name, last_message_index, use_emojis').eq('id', streak.user_id).single();
-      if (prof) {
-        const msg = await resolveMessage('missed_day_followup', prof, {});
-        if (msg) {
-          await sendOnce(
-            'missed_day_followup',
-            streak.user_id,
-            now.date,
-            'You missed today',
-            msg,
-            { action: 'reflection' }
-          );
-        }
-      }
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('id, name, email, last_message_index, use_emojis')
+      .eq('id', streak.user_id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!profile) continue;
+
+    const msg = await resolveMessage(
+      'missed_day_followup',
+      profile,
+      {}
+    );
+
+    if (msg) {
+      await sendOnce(
+        'missed_day_followup',
+        streak.user_id,
+        now.date,
+        'You missed today',
+        msg,
+        { action: 'reflection' }
+      );
     }
   }
 }
@@ -451,7 +546,7 @@ async function weeklySummaries(now) {
 
   const profiles = await getRows(
     'profiles',
-    'id, name, email'
+    'id, name, email, last_message_index, use_emojis'
   );
 
   console.log(`[WEEKLY] Profiles found: ${profiles.length}`);
@@ -459,13 +554,6 @@ async function weeklySummaries(now) {
   const weekAgo = dateDaysAgo(now.date, 7);
 
   for (const profile of profiles) {
-    if (!profile.email) {
-      console.log(
-        `[SKIP] Weekly summary: profile ${profile.id} has no email.`
-      );
-      continue;
-    }
-
     const { data: tasks, error: taskError } = await supabase
       .from('tasks')
       .select('completed')
@@ -485,16 +573,25 @@ async function weeklySummaries(now) {
 
     const total = tasks?.length || 0;
     const done = tasks?.filter(task => task.completed).length || 0;
-    const rate = total ? Math.round(done / total * 100) : 0;
+    const rate = total ? Math.round((done / total) * 100) : 0;
 
-    const msg = await resolveMessage('weekly_summary', profile, { posts: done, rate, streak: streak?.current_streak || 0 });
+    const msg = await resolveMessage(
+      'weekly_summary',
+      profile,
+      {
+        posts: done,
+        rate,
+        streak: streak?.current_streak || 0
+      }
+    );
+
     const message = msg || `${done} posts this week. ${rate}% completion.`;
 
     await sendOnce(
       'weekly_summary',
       profile.id,
       now.date,
-      '📊 Your Weekly Summary',
+      'Your Weekly Summary',
       message,
       { action: 'analytics' }
     );
