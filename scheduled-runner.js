@@ -172,7 +172,7 @@ async function sendOnce(jobKey, userId, today, title, body, data = {}) {
         title,
         body,
         data,
-        { channels }
+        { channels, emailTemplate: jobKey }
       );
     } catch (deliveryError) {
       const message = deliveryError.message || 'Unknown delivery error';

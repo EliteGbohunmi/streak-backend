@@ -250,6 +250,183 @@ async function sendEmail(to, subject, html) {
   }
 }
 
+
+// ==========================================
+// CREATOR ACCOUNTABILITY EMAIL DESIGN
+// ==========================================
+
+function escapeEmailHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildNotificationEmail(name, title, body, template = '') {
+  const templates = {
+    daily_reminder: {
+      eyebrow: 'DAILY CHECK-IN',
+      heading: 'Your next post starts here.',
+      label: 'TODAY’S FOCUS',
+      note: 'You made a commitment to show up. Give that commitment a place in your day.'
+    },
+    evening_warning: {
+      eyebrow: 'EVENING CHECK-IN',
+      heading: 'There is still time to show up.',
+      label: 'BEFORE THE DAY ENDS',
+      note: 'A small completed action is better than another day of postponing your progress.'
+    },
+    partner_alert: {
+      eyebrow: 'PARTNER ACTIVITY',
+      heading: 'Your accountability partner showed up.',
+      label: 'YOUR PARTNER UPDATE',
+      note: 'Your partner has taken action. Now it is your turn to keep the momentum going.'
+    },
+    missed_day_followup: {
+      eyebrow: 'YOUR ACCOUNTABILITY CHECK-IN',
+      heading: 'One missed day does not define your progress.',
+      label: 'TIME TO RESET',
+      note: 'Do not let one missed day become a reason to abandon the bigger commitment. Reflect, reset and continue.'
+    },
+    weekly_summary: {
+      eyebrow: 'WEEKLY REVIEW',
+      heading: 'Take a look at your week.',
+      label: 'YOUR WEEK IN REVIEW',
+      note: 'Progress becomes easier to understand when you take time to review what actually happened.'
+    }
+  };
+
+  const design = templates[template] || {
+    eyebrow: 'CREATOR ACCOUNTABILITY',
+    heading: 'A new update for you.',
+    label: 'YOUR NOTIFICATION',
+    note: 'Your progress deserves your attention. Open your dashboard to see what comes next.'
+  };
+
+  const safeName = escapeEmailHtml(name || 'Creator');
+  const safeTitle = escapeEmailHtml(title);
+  const safeBody = escapeEmailHtml(body).replace(/\r?\n/g, '<br>');
+  const dashboardUrl = 'https://creator-accountability.vercel.app/dashboard';
+
+  return `
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <title>${safeTitle}</title>
+  </head>
+  <body style="margin:0;padding:0;background-color:#15191f7ed;font-family:Arial,Helvetica,sans-serif;color:#f4f1e9;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#15191f7ed;">
+      <tr>
+        <td align="center" style="padding:38px 14px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:620px;">
+
+            <tr>
+              <td style="padding:0 8px 26px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td align="left" style="font-size:19px;font-weight:800;letter-spacing:1.5px;color:#f97316;">
+                      CREATOR<span style="color:#f4f1e9;"> ACCOUNTABILITY</span>
+                    </td>
+                    <td align="right" style="font-size:10px;letter-spacing:2px;color:#777d86;">
+                      SHOW UP. BUILD. REPEAT.
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="background-color:#15191f;border:1px solid #292e36;border-radius:14px;overflow:hidden;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+
+                  <tr>
+                    <td style="padding:34px 30px 30px;background-color:#f97316;border-bottom:1px solid #34302a;">
+                      <p style="margin:0 0 18px;font-size:10px;font-weight:bold;letter-spacing:3px;color:#f97316;">
+                        ${design.eyebrow}
+                      </p>
+                      <h1 style="margin:0;color:#ffffff;font-size:32px;line-height:1.2;font-weight:800;">
+                        ${design.heading}
+                      </h1>
+                      <p style="margin:18px 0 0;color:#a8adb5;font-size:14px;line-height:1.8;">
+                        Accountability is built through the actions you choose to take, one day at a time.
+                      </p>
+                    </td>
+                  </tr>
+
+                  <tr>
+                    <td style="padding:30px;">
+                      <p style="margin:0 0 8px;color:#a8adb5;font-size:13px;">
+                        Hello ${safeName},
+                      </p>
+
+                      <h2 style="margin:0 0 22px;color:#f4f1e9;font-size:21px;line-height:1.4;">
+                        ${safeTitle}
+                      </h2>
+
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#15191f1e6;border:1px solid #34302a;border-radius:10px;">
+                        <tr>
+                          <td style="padding:22px 22px 20px;">
+                            <p style="margin:0 0 13px;color:#f97316;font-size:10px;font-weight:bold;letter-spacing:2px;">
+                              ${design.label}
+                            </p>
+                            <p style="margin:0;color:#e2e4e8;font-size:15px;line-height:1.9;">
+                              ${safeBody}
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+
+                      <p style="margin:23px 0 27px;color:#a8adb5;font-size:13px;line-height:1.8;">
+                        ${design.note}
+                      </p>
+
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                        <tr>
+                          <td align="center" style="padding:0 0 12px;">
+                            <a href="${dashboardUrl}" style="display:inline-block;background-color:#f97316;color:#111111;text-decoration:none;font-size:14px;font-weight:bold;padding:16px 30px;border-radius:6px;">
+                              OPEN MY DASHBOARD &nbsp; &#8594;
+                            </a>
+                          </td>
+                        </tr>
+                      </table>
+
+                      <p style="margin:15px 0 0;text-align:center;color:#747b85;font-size:11px;line-height:1.7;">
+                        Your progress is built by what you do next.
+                      </p>
+                    </td>
+                  </tr>
+
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td align="center" style="padding:27px 15px 0;">
+                <p style="margin:0 0 9px;color:#f97316;font-size:11px;font-weight:bold;letter-spacing:2px;">
+                  CREATOR ACCOUNTABILITY
+                </p>
+                <p style="margin:0;color:#737983;font-size:11px;line-height:1.8;">
+                  You're receiving this email because you're a member of Creator Accountability.
+                  <br>
+                  Keep showing up for the work that matters.
+                </p>
+              </td>
+            </tr>
+
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+  </html>
+  `;
+}
+
 // ==========================================
 // INDEPENDENT EMAIL + PUSH DELIVERY
 // ==========================================
@@ -295,26 +472,12 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
         return;
       }
 
-      const safeBody = String(body || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-
-      const html = `
-        <div style="font-family:Arial,sans-serif;max-width:600px;padding:20px;border:1px solid #e0e0e0;border-radius:8px;">
-          <h2 style="color:#F5A623;">Creator Accountability</h2>
-          <p style="font-size:16px;">${safeBody}</p>
-          <div style="text-align:center;margin:20px 0;">
-            <a href="https://creator-accountability.vercel.app/dashboard"
-               style="background:#F5A623;color:#000;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">
-              Open Dashboard
-            </a>
-          </div>
-          <p style="font-size:12px;color:#999;text-align:center;">
-            You're receiving this because you're part of Creator Accountability.
-          </p>
-        </div>
-      `;
+      const html = buildNotificationEmail(
+        profile.name,
+        title,
+        body,
+        options.emailTemplate || data.type || ''
+      );
 
       try {
         const sent = await sendEmail(profile.email, title, html);
@@ -477,5 +640,6 @@ module.exports = {
   sendPush,
   sendEmail,
   notifyUser,
-  getRandomNudgeMessage
+  getRandomNudgeMessage,
+  buildNotificationEmail
 };
