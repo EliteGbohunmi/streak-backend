@@ -174,15 +174,6 @@ async function sendPushDetailed(userId, title, body, data = {}) {
         .update({ last_success_at: new Date().toISOString() })
         .eq('id', sub.id);
 
-      await logNotification(
-        userId,
-        'push',
-        true,
-        title,
-        null,
-        body,
-        data.action || null
-      );
     } catch (err) {
       console.error('[PUSH] Failed:', err.message);
       errors.push(err.message);
@@ -194,15 +185,6 @@ async function sendPushDetailed(userId, title, body, data = {}) {
           .eq('endpoint', sub.endpoint);
       }
 
-      await logNotification(
-        userId,
-        'push',
-        false,
-        title,
-        err.message,
-        body,
-        data.action || null
-      );
     }
   }
 
@@ -340,15 +322,6 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
         emailStatus = sent ? 'sent' : 'failed';
         emailError = sent ? null : 'Email delivery failed';
 
-        await logNotification(
-          userId,
-          'email',
-          sent,
-          title,
-          emailError,
-          body,
-          data.action || null
-        );
       } catch (err) {
         emailStatus = 'failed';
         emailError = err.message || 'Email delivery failed';
@@ -381,6 +354,18 @@ async function notifyUser(userId, title, body, data = {}, options = {}) {
   const pushed = pushStatus === 'sent';
 
   const success = emailSent || pushed;
+
+  if (success) {
+    await logNotification(
+      userId,
+      'system',
+      true,
+      title,
+      null,
+      body,
+      data.action || null
+    );
+  }
 
   console.log(
     `[DELIVERY] ${userId} | Email: ${emailStatus} | Push: ${pushStatus}`
